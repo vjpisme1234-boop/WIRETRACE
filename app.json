@@ -11,11 +11,7 @@
       "resizeMode": "contain",
       "backgroundColor": "#FFFFFF"
     },
-    "ios": {
-      "supportsTablet": true,
-      "bundleIdentifier": "com.placeholder.app",
-      "infoPlist": {
-        "ITSAppUsesNonExemptEncryption": false
+    
       }
     },
     "android": {

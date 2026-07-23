@@ -1,10 +1,10 @@
-import AsyncStorage from '@react-native-async-storage/async-storage';
+import * as SecureStore from 'expo-secure-store';
 import { OPENROUTER_API_KEY, OPENROUTER_BASE_URL, OPENROUTER_MODEL, STORAGE_KEYS } from '@/constants/wiretrace';
 import type { SchematicAnalysis, ReadingStep } from '@/utils/schematic-storage';
 
 async function getApiKey(): Promise<string> {
   try {
-    const stored = await AsyncStorage.getItem(STORAGE_KEYS.API_KEY);
+    const stored = await SecureStore.getItemAsync(STORAGE_KEYS.API_KEY);
     return stored || OPENROUTER_API_KEY;
   } catch {
     return OPENROUTER_API_KEY;

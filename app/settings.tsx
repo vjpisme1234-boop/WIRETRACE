@@ -10,7 +10,7 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
-import AsyncStorage from '@react-native-async-storage/async-storage';
+import * as SecureStore from 'expo-secure-store';
 import { ArrowLeft, CheckCircle, Info, Key, Mic, Zap } from 'lucide-react-native';
 import { WT, OPENROUTER_API_KEY, STORAGE_KEYS } from '@/constants/wiretrace';
 import { loadTTSSettings, saveTTSSettings, TTSSettings } from '@/utils/tts';
@@ -117,7 +117,7 @@ export default function SettingsScreen() {
     const load = async () => {
       console.log('[Settings] Loading settings');
       const [storedKey, ttsSettings] = await Promise.all([
-        AsyncStorage.getItem(STORAGE_KEYS.API_KEY),
+        SecureStore.getItemAsync(STORAGE_KEYS.API_KEY),
         loadTTSSettings(),
       ]);
       if (storedKey) setApiKey(storedKey);
@@ -130,7 +130,7 @@ export default function SettingsScreen() {
     console.log('[Settings] Save button pressed');
     try {
       await Promise.all([
-        AsyncStorage.setItem(STORAGE_KEYS.API_KEY, apiKey),
+        SecureStore.setItemAsync(STORAGE_KEYS.API_KEY, apiKey),
         saveTTSSettings(settings),
       ]);
       setSaved(true);

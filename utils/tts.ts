@@ -1,5 +1,5 @@
 import * as Speech from 'expo-speech';
-import AsyncStorage from '@react-native-async-storage/async-storage';
+import * as SecureStore from 'expo-secure-store';
 import { STORAGE_KEYS, READING_SPEEDS } from '@/constants/wiretrace';
 
 export interface TTSSettings {
@@ -16,7 +16,7 @@ export const DEFAULT_TTS_SETTINGS: TTSSettings = {
 
 export async function loadTTSSettings(): Promise<TTSSettings> {
   try {
-    const raw = await AsyncStorage.getItem(STORAGE_KEYS.SETTINGS);
+    const raw = await SecureStore.getItemAsync(STORAGE_KEYS.SETTINGS);
     if (!raw) return DEFAULT_TTS_SETTINGS;
     return { ...DEFAULT_TTS_SETTINGS, ...(JSON.parse(raw) as Partial<TTSSettings>) };
   } catch {
@@ -25,7 +25,7 @@ export async function loadTTSSettings(): Promise<TTSSettings> {
 }
 
 export async function saveTTSSettings(settings: TTSSettings): Promise<void> {
-  await AsyncStorage.setItem(STORAGE_KEYS.SETTINGS, JSON.stringify(settings));
+  await SecureStore.setItemAsync(STORAGE_KEYS.SETTINGS, JSON.stringify(settings));
   console.log('[TTS] Settings saved', settings);
 }
 

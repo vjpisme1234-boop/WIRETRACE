@@ -13,14 +13,15 @@
     },
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "com.placeholder.app"
+      "bundleIdentifier": "com.vjpisme1234.wiretraceai"
     },
     "android": {
       "adaptiveIcon": {
         "foregroundImage": "./assets/images/newly.png",
         "backgroundColor": "#FFFFFF"
       },
-      "package": "com.placeholder.app"
+      "package": "com.vjpisme1234.wiretraceai",
+      "versionCode": 1
     },
     "web": {
       "favicon": "./assets/images/newly.png",

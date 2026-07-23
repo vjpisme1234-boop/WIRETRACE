@@ -1,0 +1,11 @@
+# Bun config for Expo / React Native projects.
+# Metro (the RN bundler) resolves modules with Node-compatible semantics — it
+# expects a flat node_modules layout, not the isolated-symlinked one. `linker`
+# = "hoisted" gives that. Required for Expo packages that walk node_modules.
+
+[install]
+linker = "hoisted"
+
+# Don't fail when package.json drifts from the lockfile — the AI agent adds and
+# removes deps mid-session and we want install to reconcile rather than abort.
+frozenLockfile = false

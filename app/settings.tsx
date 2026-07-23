@@ -268,7 +268,7 @@ export default function SettingsScreen() {
             <View style={styles.aboutDivider} />
             <Text style={styles.aboutModel}>
               {'AI Model: '}
-              <Text style={styles.aboutModelName}>Google Gemini 2.0 Flash</Text>
+              <Text style={styles.aboutModelName}>Google Gemini 2.5 Flash</Text>
             </Text>
             <Text style={styles.aboutPowered}>Powered by OpenRouter</Text>
           </View>

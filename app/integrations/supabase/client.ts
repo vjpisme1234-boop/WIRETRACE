@@ -1,24 +1,7 @@
-import * as SecureStore from 'expo-secure-store';
-import type { Database } from './types';
-import { createClient } from '@supabase/supabase-js'
+// Supabase client — not used in this app.
+// Kept as a stub to avoid breaking any future imports.
+// Do NOT import @supabase/supabase-js here: it internally requires
+// @react-native-async-storage/async-storage at module load time, which
+// crashes in Expo Go where the native module is not linked.
 
-const SUPABASE_URL = "https://hvtxbihamebxdckmwvct.supabase.co";
-const SUPABASE_PUBLISHABLE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imh2dHhiaWhhbWVieGRja213dmN0Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODQ3NTc0ODksImV4cCI6MjEwMDMzMzQ4OX0.rJlSCXOzkjwxezu9xk43KGSu-ycksgX2U8hu33SQKyA";
-
-// Import the supabase client like this:
-// import { supabase } from "@/integrations/supabase/client";
-
-const ExpoSecureStoreAdapter = {
-  getItem: (key: string) => SecureStore.getItemAsync(key),
-  setItem: (key: string, value: string) => SecureStore.setItemAsync(key, value),
-  removeItem: (key: string) => SecureStore.deleteItemAsync(key),
-};
-
-export const supabase = createClient<Database>(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY, {
-  auth: {
-    storage: ExpoSecureStoreAdapter,
-    autoRefreshToken: true,
-    persistSession: true,
-    detectSessionInUrl: false,
-  },
-})
+export const supabase = null as unknown as import('@supabase/supabase-js').SupabaseClient;

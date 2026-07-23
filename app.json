@@ -11,8 +11,9 @@
       "resizeMode": "contain",
       "backgroundColor": "#FFFFFF"
     },
-    
-      }
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.placeholder.app"
     },
     "android": {
       "adaptiveIcon": {

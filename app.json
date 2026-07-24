@@ -13,7 +13,11 @@
     },
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "com.vjpisme1234.wiretraceai"
+      "bundleIdentifier": "com.vjpisme1234.wiretraceai",
+      "infoPlist": {
+        "NSCameraUsageDescription": "WireTrace AI needs camera access to photograph wire schematics for analysis.",
+        "NSPhotoLibraryUsageDescription": "WireTrace AI needs photo library access to import wire schematic images for analysis."
+      }
     },
     "android": {
       "adaptiveIcon": {
@@ -21,7 +25,15 @@
         "backgroundColor": "#FFFFFF"
       },
       "package": "com.vjpisme1234.wiretraceai",
-      "versionCode": 1
+      "versionCode": 1,
+      "permissions": [
+        "android.permission.CAMERA",
+        "android.permission.READ_MEDIA_IMAGES",
+        "CAMERA",
+        "READ_MEDIA_IMAGES",
+        "READ_EXTERNAL_STORAGE",
+        "WRITE_EXTERNAL_STORAGE"
+      ]
     },
     "web": {
       "favicon": "./assets/images/newly.png",
@@ -31,7 +43,15 @@
       "expo-font",
       "expo-router",
       "expo-web-browser",
-      "expo-secure-store"
+      "expo-secure-store",
+      "expo-camera",
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "WireTrace AI needs photo library access to import wire schematic images for analysis.",
+          "cameraPermission": "WireTrace AI needs camera access to photograph wire schematics for analysis."
+        }
+      ]
     ],
     "scheme": "wiretraceai",
     "experiments": {

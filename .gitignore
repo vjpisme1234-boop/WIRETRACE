@@ -32,8 +32,8 @@ yarn-error.*
 android/
 ios/
 
-package-lock.json
 yarn.lock
+bun.lock
 # Python
 .venv/
 venv/

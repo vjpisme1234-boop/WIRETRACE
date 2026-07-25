@@ -36,7 +36,7 @@ async function callOpenRouter(messages: OpenRouterMessage[]): Promise<string> {
     body: JSON.stringify({
       model: OPENROUTER_MODEL,
       messages,
-      // Higher token ceiling supports larger multi-page schematic payloads and follow-up Q&A responses.
+      // Increased from 4096 to 8192 to support larger multi-page schematic payloads and follow-up Q&A responses.
       max_tokens: 8192,
     }),
   });

@@ -102,7 +102,7 @@ function SkeletonLine({ width, height = 14 }: { width: number | string; height?:
 
 function SkeletonCard() {
   return (
-    <View style={[styles.card, isHighContrast && styles.highContrastCard]}>
+    <View style={styles.card}>
       <SkeletonLine width="40%" height={13} />
       <View style={{ height: 10 }} />
       <SkeletonLine width="90%" />

@@ -65,7 +65,7 @@ export default function CameraScreen() {
       const allowed = await canAnalyzeMore();
       setHasScanAllowance(allowed);
       if (!allowed) {
-        router.replace('/paywall');
+        router.push('/paywall');
       }
     };
     checkAllowance();

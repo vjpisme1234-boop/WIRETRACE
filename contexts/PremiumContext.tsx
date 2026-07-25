@@ -1,7 +1,7 @@
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
 import { Platform } from 'react-native';
 import * as SecureStore from 'expo-secure-store';
-import Purchases, { CustomerInfo, PurchasesOffering, PurchasesPackage } from 'react-native-purchases';
+import Purchases, { CustomerInfo, PurchasesError, PURCHASES_ERROR_CODE, PurchasesOffering, PurchasesPackage } from 'react-native-purchases';
 import {
   PREMIUM_ENTITLEMENT_ID,
   PREMIUM_PRODUCTS,
@@ -115,8 +115,10 @@ export function PremiumProvider({ children }: { children: React.ReactNode }) {
       setIsPremium(premium);
       await persistPremiumStatus(premium);
     } catch (e) {
-      const message = e instanceof Error ? e.message : 'Purchase failed.';
-      if (!message.toLowerCase().includes('cancel')) {
+      const candidate = e as Partial<PurchasesError>;
+      const isCancelled = candidate.code === PURCHASES_ERROR_CODE.PURCHASE_CANCELLED_ERROR;
+      if (!isCancelled) {
+        const message = e instanceof Error ? e.message : 'Purchase failed.';
         setError(message);
       }
     } finally {

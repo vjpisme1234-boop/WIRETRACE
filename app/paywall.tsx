@@ -26,11 +26,16 @@ export default function PaywallScreen() {
   const insets = useSafeAreaInsets();
   const { isPremium, isLoading, products, error, purchase, restorePurchases } = usePremium();
 
+  const fallbackPlanTitles: Record<string, string> = {
+    wiretrace_pro_monthly: 'WireTrace Pro Monthly',
+    wiretrace_pro_yearly: 'WireTrace Pro Yearly',
+  };
+
   const plans = DEFAULT_PREMIUM_PRODUCT_IDS.map((id) => {
     const product = products.find((candidate) => candidate.identifier === id);
     return {
       id,
-      title: product?.title ?? (id.includes('year') ? 'WireTrace Pro Yearly' : 'WireTrace Pro Monthly'),
+      title: product?.title ?? fallbackPlanTitles[id] ?? 'WireTrace Pro',
       description: product?.description ?? 'Unlock all premium features',
       price: product?.priceString ?? 'Configured in store',
     };

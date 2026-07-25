@@ -18,6 +18,11 @@ interface OpenRouterMessage {
 
 async function callOpenRouter(messages: OpenRouterMessage[]): Promise<string> {
   const apiKey = await getApiKey();
+
+  if (!apiKey) {
+    throw new Error('No API key configured. Please add your OpenRouter API key in Settings.');
+  }
+
   console.log('[OpenRouter] Making API request', { model: OPENROUTER_MODEL, messageCount: messages.length });
 
   const response = await fetch(`${OPENROUTER_BASE_URL}/chat/completions`, {

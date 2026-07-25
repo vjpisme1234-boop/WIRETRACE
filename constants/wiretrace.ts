@@ -1,7 +1,7 @@
 // WireTrace AI — App Constants
 
-export const OPENROUTER_API_KEY =
-  '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';
+// No default API key — users must enter their own key in Settings.
+export const OPENROUTER_API_KEY = '';
 
 export const OPENROUTER_MODEL = 'google/gemini-2.5-flash';
 export const OPENROUTER_BASE_URL = 'https://openrouter.ai/api/v1';

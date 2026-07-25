@@ -1,4 +1,6 @@
 import * as FileSystem from 'expo-file-system/legacy';
+import * as SecureStore from 'expo-secure-store';
+import { FREE_SCAN_LIMIT, STORAGE_KEYS } from '@/constants/wiretrace';
 
 const SCHEMATICS_DIR = FileSystem.documentDirectory + 'schematics/';
 const INDEX_FILE = SCHEMATICS_DIR + '_index.json';
@@ -82,6 +84,20 @@ async function writeIndex(ids: string[]): Promise<void> {
   await FileSystem.writeAsStringAsync(INDEX_FILE, JSON.stringify(ids));
 }
 
+async function readScanCount(): Promise<number> {
+  try {
+    const raw = await SecureStore.getItemAsync(STORAGE_KEYS.SCAN_COUNT);
+    const parsed = Number.parseInt(raw ?? '0', 10);
+    return Number.isFinite(parsed) ? parsed : 0;
+  } catch {
+    return 0;
+  }
+}
+
+async function writeScanCount(nextCount: number): Promise<void> {
+  await SecureStore.setItemAsync(STORAGE_KEYS.SCAN_COUNT, String(Math.max(0, nextCount)));
+}
+
 function schematicPath(id: string): string {
   return SCHEMATICS_DIR + id + '.json';
 }
@@ -115,6 +131,8 @@ export async function saveSchematic(schematic: SchematicAnalysis): Promise<void>
       // Prepend new IDs so newest appears first
       ids.unshift(schematic.id);
       await writeIndex(ids);
+      const currentCount = await readScanCount();
+      await writeScanCount(currentCount + 1);
     }
     await FileSystem.writeAsStringAsync(schematicPath(schematic.id), JSON.stringify(schematic));
     console.log('[Storage] Schematic saved', { id: schematic.id });
@@ -170,4 +188,13 @@ export function generateSchematicName(): string {
   const day = now.getDate();
   const time = now.toLocaleString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
   return `Schematic - ${month} ${day} ${time}`;
+}
+
+export async function getScanCount(): Promise<number> {
+  return readScanCount();
+}
+
+export async function canAnalyzeMore(): Promise<boolean> {
+  const count = await readScanCount();
+  return count < FREE_SCAN_LIMIT;
 }

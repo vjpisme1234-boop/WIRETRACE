@@ -2,6 +2,7 @@
   "expo": {
     "name": "WireTrace AI",
     "slug": "wiretrace-ai",
+    "description": "AI-powered wire schematic reader with premium subscriptions for electricians and technicians.",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/images/newly.png",
@@ -45,6 +46,7 @@
       "expo-web-browser",
       "expo-secure-store",
       "expo-camera",
+      "react-native-purchases",
       [
         "expo-image-picker",
         {
@@ -54,11 +56,14 @@
       ]
     ],
     "scheme": "wiretraceai",
+    "privacy": "public",
     "experiments": {
       "typedRoutes": true
     },
     "extra": {
-      "router": {}
+      "router": {},
+      "privacyPolicyUrl": "https://wiretrace.ai/privacy",
+      "termsOfServiceUrl": "https://wiretrace.ai/terms"
     }
   }
 }

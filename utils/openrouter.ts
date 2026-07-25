@@ -1,14 +1,25 @@
 import * as SecureStore from 'expo-secure-store';
-import { OPENROUTER_API_KEY, OPENROUTER_BASE_URL, OPENROUTER_MODEL, STORAGE_KEYS } from '@/constants/wiretrace';
-import type { SchematicAnalysis, ReadingStep } from '@/utils/schematic-storage';
+import {
+  OPENROUTER_API_KEY,
+  OPENROUTER_BASE_URL,
+  OPENROUTER_MODEL_FREE,
+  OPENROUTER_MODEL_PREMIUM,
+  STORAGE_KEYS,
+} from '@/constants/wiretrace';
+import type { ReadingStep } from '@/utils/schematic-storage';
 
 async function getApiKey(): Promise<string> {
-  try {
-    const stored = await SecureStore.getItemAsync(STORAGE_KEYS.API_KEY);
-    return stored || OPENROUTER_API_KEY;
-  } catch {
-    return OPENROUTER_API_KEY;
+  const stored = await SecureStore.getItemAsync(STORAGE_KEYS.API_KEY);
+  const candidate = (stored || OPENROUTER_API_KEY || '').trim();
+  if (!candidate) {
+    throw new Error('OpenRouter API key missing. Add it in Settings before running analysis.');
   }
+  return candidate;
+}
+
+async function getModel(): Promise<string> {
+  const isPremium = (await SecureStore.getItemAsync(STORAGE_KEYS.PREMIUM_STATUS)) === 'true';
+  return isPremium ? OPENROUTER_MODEL_PREMIUM : OPENROUTER_MODEL_FREE;
 }
 
 interface OpenRouterMessage {
@@ -17,19 +28,20 @@ interface OpenRouterMessage {
 }
 
 async function callOpenRouter(messages: OpenRouterMessage[]): Promise<string> {
-  const apiKey = await getApiKey();
-  console.log('[OpenRouter] Making API request', { model: OPENROUTER_MODEL, messageCount: messages.length });
+  const [apiKey, model] = await Promise.all([getApiKey(), getModel()]);
+  const authHeader = ['Bearer', apiKey].join(' ');
+  console.log('[OpenRouter] Making API request', { model, messageCount: messages.length });
 
   const response = await fetch(`${OPENROUTER_BASE_URL}/chat/completions`, {
     method: 'POST',
     headers: {
-      'Authorization': `Bearer ${apiKey}`,
+      Authorization: authHeader,
       'Content-Type': 'application/json',
       'HTTP-Referer': 'https://wiretrace.ai',
       'X-Title': 'WireTrace AI',
     },
     body: JSON.stringify({
-      model: OPENROUTER_MODEL,
+      model,
       messages,
       max_tokens: 4096,
     }),
@@ -81,7 +93,6 @@ Identify ALL standard electrical symbols: transformers (T), resistors (R), capac
   ]);
 
   try {
-    // Strip markdown code fences if present
     const cleaned = content.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
     const parsed = JSON.parse(cleaned) as AnalysisResult;
     console.log('[OpenRouter] analyzeSchematic parsed', {

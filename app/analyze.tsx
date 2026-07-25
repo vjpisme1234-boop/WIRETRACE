@@ -27,7 +27,9 @@ import {
 } from 'lucide-react-native';
 import { WT } from '@/constants/wiretrace';
 import { analyzeSchematic, AnalysisResult } from '@/utils/openrouter';
+import { usePremium } from '@/contexts/PremiumContext';
 import {
+  canAnalyzeMore,
   generateSchematicName,
   getSchematic,
   saveSchematic,
@@ -127,6 +129,7 @@ export default function AnalyzeScreen() {
   const [searchQuery, setSearchQuery] = useState('');
   const [showStartPicker, setShowStartPicker] = useState(false);
   const [generatingSteps, setGeneratingSteps] = useState(false);
+  const { isPremium } = usePremium();
 
   const pulseAnim = useRef(new Animated.Value(0.6)).current;
 
@@ -148,6 +151,15 @@ export default function AnalyzeScreen() {
     console.log('[Analyze] Starting schematic analysis', { imageUri });
 
     try {
+      if (!isPremium) {
+        const allowed = await canAnalyzeMore();
+        if (!allowed) {
+          setError('Free scan limit reached. Upgrade to premium to keep scanning.');
+          router.replace('/paywall');
+          return;
+        }
+      }
+
       console.log('[Analyze] Reading image as base64');
       const base64 = await FileSystem.readAsStringAsync(imageUri, {
         encoding: FileSystem.EncodingType.Base64,
@@ -180,7 +192,7 @@ export default function AnalyzeScreen() {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [isPremium]);
 
   useEffect(() => {
     if (params.schematicId) {

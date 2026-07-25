@@ -11,9 +11,10 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import * as SecureStore from 'expo-secure-store';
-import { ArrowLeft, CheckCircle, Info, Key, Mic, Zap } from 'lucide-react-native';
+import { ArrowLeft, CheckCircle, Crown, Info, Key, Mic, Shield, Zap } from 'lucide-react-native';
 import { WT, OPENROUTER_API_KEY, STORAGE_KEYS } from '@/constants/wiretrace';
 import { loadTTSSettings, saveTTSSettings, TTSSettings } from '@/utils/tts';
+import { usePremium } from '@/contexts/PremiumContext';
 
 function AnimatedPressable({
   onPress,
@@ -112,6 +113,7 @@ export default function SettingsScreen() {
     autoAdvanceDelay: 'off',
   });
   const [saved, setSaved] = useState(false);
+  const { isPremium } = usePremium();
 
   useEffect(() => {
     const load = async () => {
@@ -176,6 +178,21 @@ export default function SettingsScreen() {
             <Key size={16} color={WT.blue} />
             <Text style={styles.sectionTitle}>OpenRouter API Key</Text>
           </View>
+
+          {!isPremium && (
+            <View style={styles.section}>
+              <View style={styles.sectionHeader}>
+                <Crown size={16} color={WT.yellow} />
+                <Text style={styles.sectionTitle}>Upgrade to WireTrace Pro</Text>
+              </View>
+              <Text style={styles.fieldHint}>
+                Unlock unlimited scans, premium AI model, and advanced voice controls.
+              </Text>
+              <AnimatedPressable onPress={() => router.push('/paywall')} style={styles.upgradeBtn}>
+                <Text style={styles.upgradeBtnText}>View Premium Plans</Text>
+              </AnimatedPressable>
+            </View>
+          )}
           <Text style={styles.fieldLabel}>API Key</Text>
           <TextInput
             style={styles.apiKeyInput}
@@ -240,7 +257,9 @@ export default function SettingsScreen() {
             <Text style={styles.sectionTitle}>Voice</Text>
           </View>
           <SegmentControl
-            options={['default', 'male', 'female'] as TTSSettings['voice'][]}
+            options={
+              (isPremium ? ['default', 'male', 'female'] : ['default']) as TTSSettings['voice'][]
+            }
             value={settings.voice}
             onChange={(v) => {
               console.log('[Settings] Voice changed', { voice: v });
@@ -249,8 +268,21 @@ export default function SettingsScreen() {
             labels={{ default: 'Default', male: 'Male', female: 'Female' }}
           />
           <Text style={styles.fieldHint}>
-            Voice availability depends on your device's installed voices
+            {isPremium
+              ? "Voice availability depends on your device's installed voices"
+              : 'Premium feature: upgrade to unlock male/female voice options'}
           </Text>
+        </View>
+
+        {/* Legal */}
+        <View style={styles.section}>
+          <View style={styles.sectionHeader}>
+            <Shield size={16} color={WT.blue} />
+            <Text style={styles.sectionTitle}>Privacy & Terms</Text>
+          </View>
+          <AnimatedPressable onPress={() => router.push('/legal')} style={styles.legalBtn}>
+            <Text style={styles.legalBtnText}>Open Legal Documents</Text>
+          </AnimatedPressable>
         </View>
 
         {/* About */}
@@ -395,5 +427,29 @@ const styles = StyleSheet.create({
   aboutPowered: {
     fontSize: 12,
     color: WT.textTertiary,
+  },
+  upgradeBtn: {
+    backgroundColor: WT.yellow,
+    borderRadius: 12,
+    paddingVertical: 12,
+    alignItems: 'center',
+  },
+  upgradeBtnText: {
+    color: '#1A1A1A',
+    fontSize: 14,
+    fontWeight: '700',
+  },
+  legalBtn: {
+    backgroundColor: WT.bgCard,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: WT.border,
+    paddingVertical: 12,
+    alignItems: 'center',
+  },
+  legalBtnText: {
+    color: WT.textPrimary,
+    fontSize: 14,
+    fontWeight: '600',
   },
 });

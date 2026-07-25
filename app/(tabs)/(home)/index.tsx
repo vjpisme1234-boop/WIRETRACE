@@ -11,9 +11,10 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { router, useFocusEffect } from 'expo-router';
-import { Camera, CircuitBoard, Clock, Settings, Zap } from 'lucide-react-native';
+import { Camera, CircuitBoard, Clock, Crown, Settings, Zap } from 'lucide-react-native';
 import { WT } from '@/constants/wiretrace';
 import { loadSchematics, SchematicAnalysis } from '@/utils/schematic-storage';
+import { usePremium } from '@/contexts/PremiumContext';
 
 function resolveImageSource(source: string | number | ImageSourcePropType | undefined): ImageSourcePropType {
   if (!source) return { uri: '' };
@@ -125,6 +126,7 @@ export default function HomeScreen() {
   const insets = useSafeAreaInsets();
   const [schematics, setSchematics] = useState<SchematicAnalysis[]>([]);
   const scanScale = useRef(new Animated.Value(1)).current;
+  const { isPremium } = usePremium();
 
   useFocusEffect(
     useCallback(() => {
@@ -178,6 +180,12 @@ export default function HomeScreen() {
           <>
             {/* Hero scan button */}
             <View style={styles.heroSection}>
+              {!isPremium && (
+                <AnimatedPressable onPress={() => router.push('/paywall')} style={styles.upgradeChip} scaleValue={0.96}>
+                  <Crown size={14} color={WT.yellow} />
+                  <Text style={styles.upgradeChipText}>Upgrade to Pro</Text>
+                </AnimatedPressable>
+              )}
               <Animated.View style={{ transform: [{ scale: scanScale }] }}>
                 <AnimatedPressable onPress={handleScan} style={styles.scanButton} scaleValue={0.96}>
                   <View style={styles.scanButtonInner}>
@@ -260,6 +268,25 @@ const styles = StyleSheet.create({
   heroSection: {
     paddingTop: 28,
     paddingBottom: 32,
+    gap: 10,
+  },
+  upgradeChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    alignSelf: 'flex-start',
+    gap: 6,
+    borderRadius: 999,
+    backgroundColor: 'rgba(255,214,10,0.12)',
+    borderWidth: 1,
+    borderColor: 'rgba(255,214,10,0.3)',
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+  },
+  upgradeChipText: {
+    color: WT.yellow,
+    fontSize: 12,
+    fontWeight: '600',
   },
   scanButton: {
     backgroundColor: WT.blue,

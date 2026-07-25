@@ -16,6 +16,7 @@ import {
 } from "@react-navigation/native";
 import { StatusBar } from "expo-status-bar";
 import { WidgetProvider } from "@/contexts/WidgetContext";
+import { PremiumProvider } from "@/contexts/PremiumContext";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
 // Note: Error logging is auto-initialized via index.ts import
 
@@ -88,8 +89,9 @@ export default function RootLayout() {
         >
           <SafeAreaProvider>
             <WidgetProvider>
-              <GestureHandlerRootView>
-              <Stack>
+              <PremiumProvider>
+                <GestureHandlerRootView>
+                <Stack>
                 {/* Main app with tabs */}
                 <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
                 {/* WireTrace AI screens */}
@@ -129,9 +131,24 @@ export default function RootLayout() {
                     headerTintColor: '#FFFFFF',
                   }}
                 />
+                <Stack.Screen
+                  name="paywall"
+                  options={{
+                    headerShown: false,
+                    presentation: 'modal',
+                  }}
+                />
+                <Stack.Screen
+                  name="legal"
+                  options={{
+                    headerShown: false,
+                    presentation: 'modal',
+                  }}
+                />
               </Stack>
               <SystemBars style={"auto"} />
-              </GestureHandlerRootView>
+                </GestureHandlerRootView>
+              </PremiumProvider>
             </WidgetProvider>
           </SafeAreaProvider>
         </ThemeProvider>

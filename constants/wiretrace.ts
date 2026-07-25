@@ -1,15 +1,26 @@
 // WireTrace AI — App Constants
 
-export const OPENROUTER_API_KEY =
-  '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';
+export const OPENROUTER_API_KEY = process.env.EXPO_PUBLIC_OPENROUTER_API_KEY ?? '';
 
-export const OPENROUTER_MODEL = 'google/gemini-2.5-flash';
+export const OPENROUTER_MODEL_FREE = 'google/gemini-2.5-flash';
+export const OPENROUTER_MODEL_PREMIUM = 'google/gemini-2.5-pro';
 export const OPENROUTER_BASE_URL = 'https://openrouter.ai/api/v1';
+
+export const FREE_SCAN_LIMIT = 3;
+export const PREMIUM_ENTITLEMENT_ID = process.env.EXPO_PUBLIC_RC_ENTITLEMENT_ID ?? 'pro';
+export const PREMIUM_PRODUCTS = {
+  monthly: 'wiretrace_pro_monthly',
+  yearly: 'wiretrace_pro_yearly',
+} as const;
+export const PRIVACY_POLICY_URL = 'https://wiretrace.ai/privacy';
+export const TERMS_URL = 'https://wiretrace.ai/terms';
 
 export const STORAGE_KEYS = {
   SCHEMATICS: 'wiretrace_schematics',
   API_KEY: 'wiretrace_api_key',
   SETTINGS: 'wiretrace_settings',
+  SCAN_COUNT: 'wiretrace_scan_count',
+  PREMIUM_STATUS: 'wiretrace_premium_status',
 } as const;
 
 export const WT = {

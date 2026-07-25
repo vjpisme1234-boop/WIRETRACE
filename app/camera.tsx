@@ -14,6 +14,8 @@ import { CameraView, useCameraPermissions } from 'expo-camera';
 import * as ImagePicker from 'expo-image-picker';
 import { X, Image as ImageIcon } from 'lucide-react-native';
 import { WT } from '@/constants/wiretrace';
+import { canAnalyzeMore } from '@/utils/schematic-storage';
+import { usePremium } from '@/contexts/PremiumContext';
 
 function resolveImageSource(source: string | number | ImageSourcePropType | undefined): ImageSourcePropType {
   if (!source) return { uri: '' };
@@ -50,10 +52,39 @@ export default function CameraScreen() {
   const insets = useSafeAreaInsets();
   const [permission, requestPermission] = useCameraPermissions();
   const [capturedUri, setCapturedUri] = useState<string | null>(null);
+  const [hasScanAllowance, setHasScanAllowance] = useState(true);
   const cameraRef = useRef<CameraView>(null);
+  const { isPremium, isReady } = usePremium();
+
+  React.useEffect(() => {
+    const checkAllowance = async () => {
+      if (!isReady || isPremium) {
+        setHasScanAllowance(true);
+        return;
+      }
+      const allowed = await canAnalyzeMore();
+      setHasScanAllowance(allowed);
+      if (!allowed) {
+        router.replace('/paywall');
+      }
+    };
+    checkAllowance();
+  }, [isPremium, isReady]);
+
+  const ensureScanAllowed = async (): Promise<boolean> => {
+    if (isPremium) return true;
+    const allowed = await canAnalyzeMore();
+    if (!allowed) {
+      setHasScanAllowance(false);
+      router.push('/paywall');
+      return false;
+    }
+    return true;
+  };
 
   const handleCapture = async () => {
     console.log('[Camera] Shutter button pressed');
+    if (!(await ensureScanAllowed())) return;
     if (!cameraRef.current) return;
     try {
       const photo = await cameraRef.current.takePictureAsync({ quality: 0.85 });
@@ -68,6 +99,7 @@ export default function CameraScreen() {
 
   const handleGallery = async () => {
     console.log('[Camera] Gallery button pressed');
+    if (!(await ensureScanAllowed())) return;
     const result = await ImagePicker.launchImageLibraryAsync({
       mediaTypes: ['images'],
       quality: 0.85,
@@ -100,6 +132,10 @@ export default function CameraScreen() {
   };
 
   if (!permission) {
+    return <View style={styles.root} />;
+  }
+
+  if (!hasScanAllowance) {
     return <View style={styles.root} />;
   }
 

@@ -177,7 +177,7 @@ function CategorySection({ category, index }: { category: SymbolCategory; index:
       {expanded && (
         <View style={styles.symbolList}>
           {category.symbols.map((sym, i) => (
-            <View key={`${cat.title}-${sym.code}-${i}`} style={styles.symbolRow}>
+            <View key={`${category.title}-${sym.code}-${i}`} style={styles.symbolRow}>
               <View style={styles.symbolHeader}>
                 <Text style={styles.symbolLabel}>{sym.label}</Text>
                 <View style={styles.codeBadge}>

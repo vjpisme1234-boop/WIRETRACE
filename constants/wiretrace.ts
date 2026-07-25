@@ -10,6 +10,7 @@ export const STORAGE_KEYS = {
   SCHEMATICS: 'wiretrace_schematics',
   API_KEY: 'wiretrace_api_key',
   SETTINGS: 'wiretrace_settings',
+  UI_PREFS: 'wiretrace_ui_prefs',
 } as const;
 
 export const WT = {

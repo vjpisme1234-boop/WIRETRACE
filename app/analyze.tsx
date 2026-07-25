@@ -40,6 +40,7 @@ import {
   Connection,
   UnknownSymbol,
 } from '@/utils/schematic-storage';
+import { DEFAULT_UI_PREFERENCES, loadUIPreferences } from '@/utils/ui-preferences';
 
 function resolveImageSource(source: string | number | ImageSourcePropType | undefined): ImageSourcePropType {
   if (!source) return { uri: '' };
@@ -101,7 +102,7 @@ function SkeletonLine({ width, height = 14 }: { width: number | string; height?:
 
 function SkeletonCard() {
   return (
-    <View style={styles.card}>
+    <View style={[styles.card, isHighContrast && styles.highContrastCard]}>
       <SkeletonLine width="40%" height={13} />
       <View style={{ height: 10 }} />
       <SkeletonLine width="90%" />
@@ -135,6 +136,7 @@ export default function AnalyzeScreen() {
   const [aiSuggestions, setAiSuggestions] = useState<string | null>(null);
   const [askingAi, setAskingAi] = useState(false);
   const [highlightKey, setHighlightKey] = useState<string | null>(null);
+  const [uiPrefs, setUiPrefs] = useState(DEFAULT_UI_PREFERENCES);
 
   const pulseAnim = useRef(new Animated.Value(0.6)).current;
 
@@ -149,6 +151,10 @@ export default function AnalyzeScreen() {
     else pulse.stop();
     return () => pulse.stop();
   }, [loading]);
+
+  useEffect(() => {
+    loadUIPreferences().then(setUiPrefs);
+  }, []);
 
   const runAnalysis = useCallback(async (imageUri: string) => {
     setLoading(true);
@@ -382,6 +388,11 @@ export default function AnalyzeScreen() {
   );
 
   const unknownCount = schematic?.unknownSymbols.filter((u) => !u.userIdentifiedAs).length ?? 0;
+  const isHighContrast = uiPrefs.visualMode === 'highContrast';
+  const isDetailedSymbols = uiPrefs.visualMode === 'detailedSymbols';
+  const isLightMode = uiPrefs.visualMode === 'normalLight';
+  const wireDisplayLimit = uiPrefs.layoutPreset === 'residential' ? 5 : uiPrefs.layoutPreset === 'commercial' ? 10 : 8;
+  const connectionDisplayLimit = uiPrefs.layoutPreset === 'residential' ? 4 : uiPrefs.layoutPreset === 'commercial' ? 8 : 6;
 
   // Map color name to display hex (falls back to WT.blue)
   const WIRE_COLOR_MAP: Record<string, string> = {
@@ -474,6 +485,14 @@ export default function AnalyzeScreen() {
         {/* Results */}
         {schematic && !loading && (
           <>
+            <View style={[styles.prefBanner, isHighContrast && styles.prefBannerHighContrast]}>
+              <Text style={[styles.prefBannerText, isLightMode && styles.prefBannerTextDark]}>
+                Visual: {uiPrefs.visualMode === 'normalLight' ? 'Normal Light' : uiPrefs.visualMode === 'highContrast' ? 'High Contrast' : 'Detailed Symbols'}
+                {' • '}
+                Layout: {uiPrefs.layoutPreset.charAt(0).toUpperCase() + uiPrefs.layoutPreset.slice(1)}
+              </Text>
+            </View>
+
             {/* Unknown symbols warning */}
             {unknownCount > 0 && (
               <View style={styles.warningBanner}>
@@ -505,7 +524,7 @@ export default function AnalyzeScreen() {
               </View>
             ) : null}
 
-            <View style={styles.card}>
+            <View style={[styles.card, isHighContrast && styles.highContrastCard]}>
               <View style={styles.cardHeader}>
                 <MessageSquare size={16} color={WT.blue} />
                 <Text style={styles.cardTitle}>Ask AI / Get Directions</Text>
@@ -558,7 +577,7 @@ export default function AnalyzeScreen() {
             </View>
 
             {/* Wire Summary */}
-            <View style={styles.card}>
+            <View style={[styles.card, isHighContrast && styles.highContrastCard]}>
               <View style={styles.cardHeader}>
                 <Zap size={16} color={WT.blue} />
                 <Text style={styles.cardTitle}>Wire Summary</Text>
@@ -569,7 +588,7 @@ export default function AnalyzeScreen() {
               {schematic.wires.length === 0 ? (
                 <Text style={styles.emptyCardText}>No wires detected</Text>
               ) : (
-                schematic.wires.slice(0, 8).map((wire) => (
+                schematic.wires.slice(0, wireDisplayLimit).map((wire) => (
                   <AnimatedPressable
                     key={wire.id}
                     onPress={() => toggleHighlight(`wire:${wire.id}`)}
@@ -592,17 +611,17 @@ export default function AnalyzeScreen() {
                   </AnimatedPressable>
                 ))
               )}
-              {schematic.wires.length > 8 && (
+              {schematic.wires.length > wireDisplayLimit && (
                 <Text style={styles.moreText}>
                   {'+'}
-                  {schematic.wires.length - 8}
+                  {schematic.wires.length - wireDisplayLimit}
                   {' more wires'}
                 </Text>
               )}
             </View>
 
             {/* Components */}
-            <View style={styles.card}>
+            <View style={[styles.card, isHighContrast && styles.highContrastCard]}>
               <View style={styles.cardHeader}>
                 <Cpu size={16} color={WT.blue} />
                 <Text style={styles.cardTitle}>Components Found</Text>
@@ -629,7 +648,7 @@ export default function AnalyzeScreen() {
                       </View>
                       <ConfBadge confidence={comp.confidence} />
                     </View>
-                    <Text style={styles.componentDesc} numberOfLines={2}>
+                    <Text style={styles.componentDesc} numberOfLines={isDetailedSymbols ? 4 : 2}>
                       {comp.description}
                     </Text>
                   </AnimatedPressable>
@@ -639,7 +658,7 @@ export default function AnalyzeScreen() {
 
             {/* Unknown Symbols */}
             {schematic.unknownSymbols.length > 0 && (
-              <View style={styles.card}>
+              <View style={[styles.card, isHighContrast && styles.highContrastCard]}>
                 <View style={styles.cardHeader}>
                   <AlertTriangle size={16} color={WT.yellow} />
                   <Text style={styles.cardTitle}>Unknown Symbols</Text>
@@ -679,7 +698,7 @@ export default function AnalyzeScreen() {
             )}
 
             {/* Connections */}
-            <View style={styles.card}>
+            <View style={[styles.card, isHighContrast && styles.highContrastCard]}>
               <View style={styles.cardHeader}>
                 <View style={styles.connectionIcon}>
                   <Text style={styles.connectionIconText}>⟶</Text>
@@ -692,7 +711,7 @@ export default function AnalyzeScreen() {
               {schematic.connections.length === 0 ? (
                 <Text style={styles.emptyCardText}>No connections detected</Text>
               ) : (
-                schematic.connections.slice(0, 6).map((conn) => (
+                schematic.connections.slice(0, connectionDisplayLimit).map((conn) => (
                   <AnimatedPressable
                     key={conn.id}
                     onPress={() => toggleHighlight(`connection:${conn.id}`)}
@@ -706,10 +725,10 @@ export default function AnalyzeScreen() {
                   </AnimatedPressable>
                 ))
               )}
-              {schematic.connections.length > 6 && (
+              {schematic.connections.length > connectionDisplayLimit && (
                 <Text style={styles.moreText}>
                   {'+'}
-                  {schematic.connections.length - 6}
+                  {schematic.connections.length - connectionDisplayLimit}
                   {' more connections'}
                 </Text>
               )}
@@ -967,6 +986,27 @@ const styles = StyleSheet.create({
     color: WT.yellow,
     lineHeight: 18,
   },
+  prefBanner: {
+    backgroundColor: WT.bgCardAlt,
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderWidth: 1,
+    borderColor: WT.border,
+  },
+  prefBannerHighContrast: {
+    borderColor: WT.yellow,
+    backgroundColor: 'rgba(255,214,10,0.16)',
+  },
+  prefBannerText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: WT.textSecondary,
+    textAlign: 'center',
+  },
+  prefBannerTextDark: {
+    color: WT.textPrimary,
+  },
   identifyNowBtn: {
     backgroundColor: WT.yellow,
     borderRadius: 8,
@@ -985,6 +1025,10 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: WT.border,
     gap: 10,
+  },
+  highContrastCard: {
+    borderWidth: 2,
+    borderColor: WT.yellow,
   },
   aiHelperText: {
     fontSize: 12,

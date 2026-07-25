@@ -21,6 +21,7 @@ import { ExpoSpeechRecognitionModule, useSpeechRecognitionEvent } from 'expo-spe
 import { WT } from '@/constants/wiretrace';
 import { getSchematic, ReadingStep } from '@/utils/schematic-storage';
 import { speakText, stopSpeech } from '@/utils/tts';
+import { DEFAULT_UI_PREFERENCES, loadUIPreferences } from '@/utils/ui-preferences';
 
 function AnimatedPressable({
   onPress,
@@ -61,6 +62,7 @@ export default function ReaderScreen() {
   const [listeningForVoice, setListeningForVoice] = useState(false);
   const [voiceStatus, setVoiceStatus] = useState('Say "next" when ready');
   const [voiceError, setVoiceError] = useState<string | null>(null);
+  const [uiPrefs, setUiPrefs] = useState(DEFAULT_UI_PREFERENCES);
 
   const contentOpacity = useRef(new Animated.Value(0)).current;
   const contentTranslate = useRef(new Animated.Value(20)).current;
@@ -97,6 +99,10 @@ export default function ReaderScreen() {
       console.log('[Reader] Steps loaded', { count: stepsToUse.length });
     };
     load();
+  }, []);
+
+  useEffect(() => {
+    loadUIPreferences().then(setUiPrefs);
   }, []);
 
   const stopVoiceListening = useCallback(() => {
@@ -296,10 +302,14 @@ export default function ReaderScreen() {
   });
 
   const counterText = `${currentIndex + 1} of ${steps.length}`;
+  const isHighContrast = uiPrefs.visualMode === 'highContrast';
+  const isDetailedSymbols = uiPrefs.visualMode === 'detailedSymbols';
+  const isResidentialLayout = uiPrefs.layoutPreset === 'residential';
+  const isCommercialLayout = uiPrefs.layoutPreset === 'commercial';
 
   return (
     <GestureDetector gesture={swipeGesture}>
-      <View style={[styles.root, { paddingTop: insets.top }]}>
+      <View style={[styles.root, isHighContrast && styles.rootHighContrast, { paddingTop: insets.top }]}>
         {/* Progress bar */}
         <View style={styles.progressTrack}>
           <Animated.View style={[styles.progressFill, { width: progressWidth }]} />
@@ -327,19 +337,24 @@ export default function ReaderScreen() {
             { opacity: contentOpacity, transform: [{ translateY: contentTranslate }] },
           ]}
         >
+          <View style={[styles.modeBadge, isHighContrast && styles.modeBadgeHighContrast]}>
+            <Text style={[styles.modeBadgeText, isHighContrast && styles.modeBadgeTextHighContrast]}>
+              {uiPrefs.layoutPreset.toUpperCase()} • {uiPrefs.visualMode === 'normalLight' ? 'NORMAL LIGHT' : uiPrefs.visualMode === 'highContrast' ? 'HIGH CONTRAST' : 'DETAILED SYMBOLS'}
+            </Text>
+          </View>
           {step.wireLabel && (
-            <Text style={styles.wireLabel}>{step.wireLabel}</Text>
+            <Text style={[styles.wireLabel, isHighContrast && styles.textHighContrast]}>{step.wireLabel}</Text>
           )}
-          <Text style={styles.instruction}>{step.instruction}</Text>
-          {step.componentLabel && (
+          <Text style={[styles.instruction, isHighContrast && styles.instructionHighContrast]}>{step.instruction}</Text>
+          {step.componentLabel && !isResidentialLayout && (
             <View style={styles.componentBadge}>
               <Text style={styles.componentBadgeText}>{step.componentLabel}</Text>
             </View>
           )}
-          {step.detail && (
+          {(step.detail && !isResidentialLayout) && (
             <Text style={styles.detail}>{step.detail}</Text>
           )}
-          {step.specialInstruction && (
+          {step.specialInstruction && (isCommercialLayout || isDetailedSymbols) && (
             <View style={styles.specialBox}>
               <Text style={styles.specialLabel}>Special Instruction</Text>
               <Text style={styles.specialText}>{step.specialInstruction}</Text>
@@ -357,17 +372,21 @@ export default function ReaderScreen() {
         {/* Bottom controls */}
         <View style={[styles.bottomControls, { paddingBottom: insets.bottom + 16 }]}>
           <View style={styles.secondaryControls}>
-            <AnimatedPressable
-              onPress={handlePrev}
-              style={styles.prevBtn}
-              disabled={currentIndex === 0}
-              scaleValue={0.93}
-            >
-              <ChevronLeft size={20} color={currentIndex === 0 ? WT.textTertiary : WT.textSecondary} />
-              <Text style={[styles.prevBtnText, currentIndex === 0 && { color: WT.textTertiary }]}>
-                Previous
-              </Text>
-            </AnimatedPressable>
+            {!isResidentialLayout ? (
+              <AnimatedPressable
+                onPress={handlePrev}
+                style={styles.prevBtn}
+                disabled={currentIndex === 0}
+                scaleValue={0.93}
+              >
+                <ChevronLeft size={20} color={currentIndex === 0 ? WT.textTertiary : WT.textSecondary} />
+                <Text style={[styles.prevBtnText, currentIndex === 0 && { color: WT.textTertiary }]}>
+                  Previous
+                </Text>
+              </AnimatedPressable>
+            ) : (
+              <View />
+            )}
 
             <AnimatedPressable onPress={handleReread} style={styles.rereadBtn} scaleValue={0.9}>
               <Volume2 size={20} color={WT.textSecondary} />
@@ -382,7 +401,7 @@ export default function ReaderScreen() {
 
           <AnimatedPressable onPress={handleNext} style={styles.nextBtn} scaleValue={0.97}>
             <Text style={styles.nextBtnText}>
-              {currentIndex >= steps.length - 1 ? 'FINISH' : 'NEXT STEP'}
+              {currentIndex >= steps.length - 1 ? 'FINISH' : isResidentialLayout ? 'NEXT' : isCommercialLayout ? 'NEXT CHECKPOINT' : 'NEXT STEP'}
             </Text>
           </AnimatedPressable>
         </View>
@@ -395,6 +414,9 @@ const styles = StyleSheet.create({
   root: {
     flex: 1,
     backgroundColor: WT.bg,
+  },
+  rootHighContrast: {
+    backgroundColor: '#000000',
   },
   centered: {
     alignItems: 'center',
@@ -444,17 +466,48 @@ const styles = StyleSheet.create({
     paddingTop: 32,
     gap: 20,
   },
+  modeBadge: {
+    alignSelf: 'flex-start',
+    backgroundColor: WT.bgCardAlt,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: WT.border,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+  },
+  modeBadgeHighContrast: {
+    borderColor: WT.yellow,
+    backgroundColor: 'rgba(255,214,10,0.18)',
+  },
+  modeBadgeText: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: WT.textSecondary,
+    letterSpacing: 0.7,
+  },
+  modeBadgeTextHighContrast: {
+    color: WT.yellow,
+  },
   wireLabel: {
     fontSize: 32,
     fontWeight: '800',
     color: WT.blue,
     letterSpacing: -0.5,
   },
+  textHighContrast: {
+    color: WT.yellow,
+  },
   instruction: {
     fontSize: 22,
     fontWeight: '500',
     color: WT.textPrimary,
     lineHeight: 32,
+  },
+  instructionHighContrast: {
+    fontSize: 24,
+    lineHeight: 34,
+    fontWeight: '700',
+    color: '#FFFFFF',
   },
   componentBadge: {
     alignSelf: 'flex-start',

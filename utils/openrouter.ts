@@ -269,3 +269,28 @@ export async function identifySymbolRegion(
 
   return content.trim();
 }
+
+// ---------------------------------------------------------------------------
+// Schematic Q&A assistant
+// ---------------------------------------------------------------------------
+
+export async function answerSchematicQuestion(
+  analysis: AnalysisResult,
+  question: string
+): Promise<string> {
+  console.log('[OpenRouter] answerSchematicQuestion called');
+
+  const content = await callOpenRouter([
+    {
+      role: 'system',
+      content:
+        'You are a helpful electrical troubleshooting assistant. Answer clearly and briefly using the provided schematic analysis. If asked for directions, give practical step-by-step guidance and include safety cautions when relevant.',
+    },
+    {
+      role: 'user',
+      content: `Schematic analysis:\n${JSON.stringify(analysis, null, 2)}\n\nUser question:\n${question}`,
+    },
+  ]);
+
+  return content.trim();
+}

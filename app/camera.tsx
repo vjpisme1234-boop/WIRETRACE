@@ -12,6 +12,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import { CameraView, useCameraPermissions } from 'expo-camera';
 import * as ImagePicker from 'expo-image-picker';
+import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import { Flashlight, FlashlightOff, Image as ImageIcon, Minus, Plus, X } from 'lucide-react-native';
 import { WT } from '@/constants/wiretrace';
 
@@ -70,6 +71,7 @@ export default function CameraScreen() {
   const [zoom, setZoom] = useState(0);
 
   const cameraRef = useRef<CameraView>(null);
+  const pinchStartZoom = useRef(0);
 
   // -------------------------------------------------------------------------
   // Capture / gallery
@@ -118,6 +120,15 @@ export default function CameraScreen() {
     setZoom((z) => Math.min(MAX_ZOOM, parseFloat((z + ZOOM_STEP).toFixed(2))));
   const handleZoomOut = () =>
     setZoom((z) => Math.max(MIN_ZOOM, parseFloat((z - ZOOM_STEP).toFixed(2))));
+
+  const pinchGesture = Gesture.Pinch()
+    .onStart(() => {
+      pinchStartZoom.current = zoom;
+    })
+    .onUpdate((event) => {
+      const nextZoom = Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, pinchStartZoom.current + (event.scale - 1) * 0.35));
+      setZoom(parseFloat(nextZoom.toFixed(3)));
+    });
 
   // -------------------------------------------------------------------------
   // Navigation
@@ -300,13 +311,15 @@ export default function CameraScreen() {
 
   return (
     <View style={styles.root}>
-      <CameraView
-        ref={cameraRef}
-        style={StyleSheet.absoluteFill}
-        facing="back"
-        enableTorch={torch}
-        zoom={zoom}
-      />
+      <GestureDetector gesture={pinchGesture}>
+        <CameraView
+          ref={cameraRef}
+          style={StyleSheet.absoluteFill}
+          facing="back"
+          enableTorch={torch}
+          zoom={zoom}
+        />
+      </GestureDetector>
 
       {/* Corner-bracket viewfinder overlay */}
       <View style={styles.viewfinderContainer}>

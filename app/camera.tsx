@@ -53,7 +53,8 @@ const MIN_ZOOM = 0;
 const MAX_ZOOM = 1;
 const ZOOM_STEP = 0.1;
 
-// Display label: map zoom prop (0–1) to "1.0x"–"3.0x"
+// Expo Camera zoom prop is normalized from 0..1.
+// In this screen we map that to an effective 1.0x..3.0x user-facing scale.
 function zoomLabel(zoom: number): string {
   return `${(1 + zoom * 2).toFixed(1)}x`;
 }

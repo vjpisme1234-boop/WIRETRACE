@@ -1,4 +1,4 @@
-// Initialize Newly console log capture before anything else
+// Initialize WireTrace console log capture before anything else
 import './utils/errorLogger';
 
 // Polyfills

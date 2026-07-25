@@ -9,7 +9,7 @@
     "splash": {
       "image": "./assets/images/newly.png",
       "resizeMode": "contain",
-      "backgroundColor": "#FFFFFF"
+      "backgroundColor": "#0A0A0F"
     },
     "ios": {
       "supportsTablet": true,
@@ -45,6 +45,7 @@
       "expo-web-browser",
       "expo-secure-store",
       "expo-camera",
+      "expo-speech-recognition",
       [
         "expo-image-picker",
         {

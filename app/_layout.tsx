@@ -129,6 +129,13 @@ export default function RootLayout() {
                     headerTintColor: '#FFFFFF',
                   }}
                 />
+                <Stack.Screen
+                  name="symbol-dictionary"
+                  options={{
+                    headerShown: false,
+                    presentation: 'modal',
+                  }}
+                />
               </Stack>
               <SystemBars style={"auto"} />
               </GestureHandlerRootView>

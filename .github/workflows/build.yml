@@ -1,27 +1,81 @@
-name: Build React Native App
+name: EAS Build – Signed APK & iOS
 
 on:
   push:
-    branches: [ "main" ]
-  pull_request:
-    branches: [ "main" ]
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      profile:
+        description: 'EAS build profile'
+        required: true
+        default: 'production-apk'
+        type: choice
+        options:
+          - production-apk
+          - production
+          - preview
+          - development
 
 jobs:
-  build:
+  build-android:
+    name: Android – Signed APK
     runs-on: ubuntu-latest
-
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
 
       - name: Set up Node
-        uses: actions/setup-node@v3
+        uses: actions/setup-node@v4
         with:
-          node-version: 18
+          node-version: 20
+          cache: npm
 
       - name: Install dependencies
         run: npm install --legacy-peer-deps
 
-      - name: Build JS bundle
-        run: npx react-native bundle --platform android --dev false --entry-file index.js --bundle-output android/app/src/main/assets/index.android.bundle --assets-dest android/app/src/main/res
- 
+      - name: Set up Expo & EAS
+        uses: expo/expo-github-action@v8
+        with:
+          eas-version: latest
+          token: ${{ secrets.EXPO_TOKEN }}
+
+      - name: Build signed Android APK
+        run: |
+          PROFILE="${{ github.event.inputs.profile || 'production-apk' }}"
+          eas build \
+            --platform android \
+            --profile "$PROFILE" \
+            --non-interactive \
+            --no-wait
+
+  build-ios:
+    name: iOS – Signed IPA
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm install --legacy-peer-deps
+
+      - name: Set up Expo & EAS
+        uses: expo/expo-github-action@v8
+        with:
+          eas-version: latest
+          token: ${{ secrets.EXPO_TOKEN }}
+
+      - name: Build signed iOS IPA
+        run: |
+          PROFILE="${{ github.event.inputs.profile || 'production' }}"
+          eas build \
+            --platform ios \
+            --profile "$PROFILE" \
+            --non-interactive \
+            --no-wait
+

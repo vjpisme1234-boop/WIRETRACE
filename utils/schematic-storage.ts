@@ -9,6 +9,8 @@ export interface WireInfo {
   color?: string;
   fromPoint: string;
   toPoint: string;
+  voltage?: string;
+  confidence?: number;
 }
 
 export interface ComponentInfo {
@@ -18,6 +20,7 @@ export interface ComponentInfo {
   description: string;
   isUnknown: boolean;
   userIdentifiedAs?: string;
+  confidence?: number;
 }
 
 export interface Connection {
@@ -50,6 +53,7 @@ export interface SchematicAnalysis {
   imageUri: string;
   analyzedAt: string;
   name: string;
+  summary?: string;
   wireCount: number;
   componentCount: number;
   wires: WireInfo[];

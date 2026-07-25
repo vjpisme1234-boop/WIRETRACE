@@ -12,7 +12,8 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import { CameraView, useCameraPermissions } from 'expo-camera';
 import * as ImagePicker from 'expo-image-picker';
-import { X, Image as ImageIcon } from 'lucide-react-native';
+import { Gesture, GestureDetector } from 'react-native-gesture-handler';
+import { Flashlight, FlashlightOff, Image as ImageIcon, Minus, Plus, X } from 'lucide-react-native';
 import { WT } from '@/constants/wiretrace';
 
 function resolveImageSource(source: string | number | ImageSourcePropType | undefined): ImageSourcePropType {
@@ -26,11 +27,13 @@ function AnimatedPressable({
   style,
   children,
   scaleValue = 0.95,
+  disabled,
 }: {
   onPress?: () => void;
   style?: object | object[];
   children: React.ReactNode;
   scaleValue?: number;
+  disabled?: boolean;
 }) {
   const scale = useRef(new Animated.Value(1)).current;
   const animIn = () =>
@@ -38,28 +41,51 @@ function AnimatedPressable({
   const animOut = () =>
     Animated.spring(scale, { toValue: 1, useNativeDriver: true, speed: 50, bounciness: 4 }).start();
   return (
-    <Animated.View style={{ transform: [{ scale }] }}>
-      <Pressable onPressIn={animIn} onPressOut={animOut} onPress={onPress} style={style}>
+    <Animated.View style={[{ transform: [{ scale }] }, disabled && { opacity: 0.4 }]}>
+      <Pressable onPressIn={animIn} onPressOut={animOut} onPress={onPress} disabled={disabled} style={style}>
         {children}
       </Pressable>
     </Animated.View>
   );
 }
 
+const MIN_ZOOM = 0;
+const MAX_ZOOM = 1;
+const ZOOM_STEP = 0.1;
+
+// Expo Camera zoom prop is normalized from 0..1.
+// In this screen we map that to an effective 1.0x..3.0x user-facing scale.
+function zoomLabel(zoom: number): string {
+  return `${(1 + zoom * 2).toFixed(1)}x`;
+}
+
 export default function CameraScreen() {
   const insets = useSafeAreaInsets();
   const [permission, requestPermission] = useCameraPermissions();
-  const [capturedUri, setCapturedUri] = useState<string | null>(null);
+
+  // A single captured URI pending preview decision
+  const [previewUri, setPreviewUri] = useState<string | null>(null);
+  // Accumulated pages for multi-page scanning
+  const [pages, setPages] = useState<string[]>([]);
+
+  const [torch, setTorch] = useState(false);
+  const [zoom, setZoom] = useState(0);
+
   const cameraRef = useRef<CameraView>(null);
+  const pinchStartZoom = useRef(0);
+
+  // -------------------------------------------------------------------------
+  // Capture / gallery
+  // -------------------------------------------------------------------------
 
   const handleCapture = async () => {
     console.log('[Camera] Shutter button pressed');
     if (!cameraRef.current) return;
     try {
-      const photo = await cameraRef.current.takePictureAsync({ quality: 0.85 });
+      const photo = await cameraRef.current.takePictureAsync({ quality: 0.9 });
       if (photo?.uri) {
         console.log('[Camera] Photo captured', { uri: photo.uri });
-        setCapturedUri(photo.uri);
+        setPreviewUri(photo.uri);
       }
     } catch (e) {
       console.error('[Camera] Capture failed', e);
@@ -70,38 +96,99 @@ export default function CameraScreen() {
     console.log('[Camera] Gallery button pressed');
     const result = await ImagePicker.launchImageLibraryAsync({
       mediaTypes: ['images'],
-      quality: 0.85,
-      allowsEditing: false,
+      quality: 0.9,
+      allowsMultipleSelection: true,
+      selectionLimit: 10,
     });
-    if (!result.canceled && result.assets[0]?.uri) {
-      console.log('[Camera] Gallery image selected', { uri: result.assets[0].uri });
-      setCapturedUri(result.assets[0].uri);
+    if (!result.canceled && result.assets.length > 0) {
+      const uris = result.assets.map((a) => a.uri);
+      console.log('[Camera] Gallery images selected', { count: uris.length });
+      if (uris.length === 1) {
+        setPreviewUri(uris[0]);
+      } else {
+        // Multiple pages selected — go straight to multi-preview
+        setPages(uris);
+        setPreviewUri(null);
+      }
     }
   };
 
-  const handleCancel = () => {
-    console.log('[Camera] Cancel button pressed');
-    if (capturedUri) {
-      setCapturedUri(null);
+  // -------------------------------------------------------------------------
+  // Zoom helpers
+  // -------------------------------------------------------------------------
+
+  const handleZoomIn = () =>
+    setZoom((z) => Math.min(MAX_ZOOM, parseFloat((z + ZOOM_STEP).toFixed(2))));
+  const handleZoomOut = () =>
+    setZoom((z) => Math.max(MIN_ZOOM, parseFloat((z - ZOOM_STEP).toFixed(2))));
+
+  const pinchGesture = Gesture.Pinch()
+    .onStart(() => {
+      pinchStartZoom.current = zoom;
+    })
+    .onUpdate((event) => {
+      const nextZoom = Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, pinchStartZoom.current + (event.scale - 1) * 0.35));
+      setZoom(parseFloat(nextZoom.toFixed(3)));
+    });
+
+  // -------------------------------------------------------------------------
+  // Navigation
+  // -------------------------------------------------------------------------
+
+  const navigateToAnalyze = (imageUri: string) => {
+    router.replace({ pathname: '/analyze', params: { imageUri } });
+  };
+
+  const navigateToAnalyzeMulti = (uris: string[]) => {
+    if (uris.length === 1) {
+      navigateToAnalyze(uris[0]);
     } else {
-      router.back();
+      router.replace({ pathname: '/analyze', params: { imageUris: JSON.stringify(uris) } });
     }
   };
 
-  const handleUsePhoto = () => {
-    if (!capturedUri) return;
-    console.log('[Camera] Use Photo pressed', { uri: capturedUri });
-    router.replace({ pathname: '/analyze', params: { imageUri: capturedUri } });
-  };
+  // -------------------------------------------------------------------------
+  // Preview controls
+  // -------------------------------------------------------------------------
 
   const handleRetake = () => {
     console.log('[Camera] Retake pressed');
-    setCapturedUri(null);
+    setPreviewUri(null);
   };
 
-  if (!permission) {
-    return <View style={styles.root} />;
-  }
+  const handleAddAnotherPage = () => {
+    if (!previewUri) return;
+    console.log('[Camera] Add Another Page pressed');
+    setPages((prev) => [...prev, previewUri]);
+    setPreviewUri(null);
+  };
+
+  const handleUseCurrentPhoto = () => {
+    if (!previewUri) return;
+    console.log('[Camera] Use Photo pressed', { uri: previewUri });
+    if (pages.length === 0) {
+      navigateToAnalyze(previewUri);
+    } else {
+      navigateToAnalyzeMulti([...pages, previewUri]);
+    }
+  };
+
+  const handleFinishPages = () => {
+    console.log('[Camera] Finish pages pressed', { count: pages.length });
+    navigateToAnalyzeMulti(pages);
+  };
+
+  const handleClearPages = () => {
+    console.log('[Camera] Clear pages pressed');
+    setPages([]);
+    setPreviewUri(null);
+  };
+
+  // -------------------------------------------------------------------------
+  // Permission screen
+  // -------------------------------------------------------------------------
+
+  if (!permission) return <View style={styles.root} />;
 
   if (!permission.granted) {
     return (
@@ -123,43 +210,119 @@ export default function CameraScreen() {
     );
   }
 
-  // Preview mode
-  if (capturedUri) {
+  // -------------------------------------------------------------------------
+  // Multi-page accumulated preview (pages > 0, no current preview)
+  // -------------------------------------------------------------------------
+
+  if (pages.length > 0 && !previewUri) {
     return (
       <View style={styles.root}>
         <Image
-          source={resolveImageSource(capturedUri)}
+          source={resolveImageSource(pages[0])}
           style={StyleSheet.absoluteFill}
           resizeMode="contain"
         />
-        <View style={[styles.previewOverlay, { paddingBottom: insets.bottom + 32 }]}>
-          <Text style={styles.previewLabel}>Use this photo?</Text>
-          <View style={styles.previewButtons}>
-            <AnimatedPressable onPress={handleRetake} style={styles.retakeBtn}>
-              <Text style={styles.retakeBtnText}>Retake</Text>
-            </AnimatedPressable>
-            <AnimatedPressable onPress={handleUsePhoto} style={styles.usePhotoBtn}>
-              <Text style={styles.usePhotoBtnText}>Use Photo</Text>
-            </AnimatedPressable>
-          </View>
+        <View style={styles.dimOverlay} />
+
+        {/* Page count badge */}
+        <View style={[styles.pagesBadge, { top: insets.top + 16 }]}>
+          <Text style={styles.pagesBadgeText}>{pages.length} page{pages.length !== 1 ? 's' : ''} queued</Text>
         </View>
+
         <AnimatedPressable
-          onPress={handleCancel}
+          onPress={handleClearPages}
           style={[styles.closeBtn, { top: insets.top + 12 }]}
           scaleValue={0.9}
         >
           <X size={22} color="#FFFFFF" />
         </AnimatedPressable>
+
+        <View style={[styles.previewOverlay, { paddingBottom: insets.bottom + 32 }]}>
+          <Text style={styles.previewLabel}>{pages.length} page{pages.length !== 1 ? 's' : ''} ready</Text>
+          <Text style={styles.previewSub}>Add more pages or finish to analyze all at once</Text>
+          <View style={styles.previewButtons}>
+            <AnimatedPressable onPress={() => setPages([])} style={styles.retakeBtn}>
+              <Text style={styles.retakeBtnText}>Clear All</Text>
+            </AnimatedPressable>
+            <AnimatedPressable onPress={() => setPreviewUri(null)} style={styles.addPageBtn}>
+              <Text style={styles.addPageBtnText}>Add Page</Text>
+            </AnimatedPressable>
+          </View>
+          <AnimatedPressable onPress={handleFinishPages} style={styles.finishBtn} scaleValue={0.97}>
+            <Text style={styles.finishBtnText}>Analyze {pages.length} Pages →</Text>
+          </AnimatedPressable>
+        </View>
       </View>
     );
   }
 
+  // -------------------------------------------------------------------------
+  // Single-photo preview
+  // -------------------------------------------------------------------------
+
+  if (previewUri) {
+    const totalPages = pages.length + 1;
+    return (
+      <View style={styles.root}>
+        <Image
+          source={resolveImageSource(previewUri)}
+          style={StyleSheet.absoluteFill}
+          resizeMode="contain"
+        />
+        {pages.length > 0 && (
+          <View style={[styles.pagesBadge, { top: insets.top + 16 }]}>
+            <Text style={styles.pagesBadgeText}>Page {totalPages} of scan</Text>
+          </View>
+        )}
+        <AnimatedPressable
+          onPress={handleRetake}
+          style={[styles.closeBtn, { top: insets.top + 12 }]}
+          scaleValue={0.9}
+        >
+          <X size={22} color="#FFFFFF" />
+        </AnimatedPressable>
+        <View style={[styles.previewOverlay, { paddingBottom: insets.bottom + 32 }]}>
+          <Text style={styles.previewLabel}>
+            {pages.length > 0 ? `Page ${totalPages} — looks good?` : 'Use this photo?'}
+          </Text>
+          {pages.length === 0 && (
+            <Text style={styles.previewSub}>Tip: scan multiple pages to analyze an entire schematic book</Text>
+          )}
+          <View style={styles.previewButtons}>
+            <AnimatedPressable onPress={handleRetake} style={styles.retakeBtn}>
+              <Text style={styles.retakeBtnText}>Retake</Text>
+            </AnimatedPressable>
+            <AnimatedPressable onPress={handleAddAnotherPage} style={styles.addPageBtn}>
+              <Text style={styles.addPageBtnText}>+ Add Page</Text>
+            </AnimatedPressable>
+          </View>
+          <AnimatedPressable onPress={handleUseCurrentPhoto} style={styles.finishBtn} scaleValue={0.97}>
+            <Text style={styles.finishBtnText}>
+              {pages.length > 0 ? `Analyze All ${totalPages} Pages →` : 'Analyze Photo →'}
+            </Text>
+          </AnimatedPressable>
+        </View>
+      </View>
+    );
+  }
+
+  // -------------------------------------------------------------------------
   // Camera viewfinder
+  // -------------------------------------------------------------------------
+
   return (
     <View style={styles.root}>
-      <CameraView ref={cameraRef} style={StyleSheet.absoluteFill} facing="back" />
+      <GestureDetector gesture={pinchGesture}>
+        <CameraView
+          ref={cameraRef}
+          style={StyleSheet.absoluteFill}
+          facing="back"
+          enableTorch={torch}
+          zoom={zoom}
+        />
+      </GestureDetector>
 
-      {/* Corner brackets overlay */}
+      {/* Corner-bracket viewfinder overlay */}
       <View style={styles.viewfinderContainer}>
         <View style={styles.viewfinder}>
           <View style={[styles.corner, styles.cornerTL]} />
@@ -167,16 +330,73 @@ export default function CameraScreen() {
           <View style={[styles.corner, styles.cornerBL]} />
           <View style={[styles.corner, styles.cornerBR]} />
         </View>
-        <Text style={styles.viewfinderHint}>Align schematic within frame</Text>
+        <Text style={styles.viewfinderHint}>Align schematic within frame • Ensure good lighting</Text>
       </View>
+
+      {/* Pages accumulated badge */}
+      {pages.length > 0 && (
+        <View style={[styles.pagesBadge, { top: insets.top + 16 }]}>
+          <Text style={styles.pagesBadgeText}>{pages.length} page{pages.length !== 1 ? 's' : ''} captured</Text>
+        </View>
+      )}
 
       {/* Top bar */}
       <View style={[styles.topBar, { paddingTop: insets.top + 8 }]}>
-        <AnimatedPressable onPress={handleCancel} style={styles.closeBtn} scaleValue={0.9}>
+        <AnimatedPressable
+          onPress={() => {
+            console.log('[Camera] Cancel pressed');
+            if (pages.length > 0) {
+              setPages([]);
+            } else {
+              router.back();
+            }
+          }}
+          style={styles.closeBtn}
+          scaleValue={0.9}
+        >
           <X size={22} color="#FFFFFF" />
         </AnimatedPressable>
+
         <Text style={styles.topBarTitle}>Scan Schematic</Text>
-        <View style={{ width: 44 }} />
+
+        {/* Torch toggle */}
+        <AnimatedPressable
+          onPress={() => {
+            console.log('[Camera] Torch toggled', { torch: !torch });
+            setTorch((t) => !t);
+          }}
+          style={[styles.closeBtn, torch && styles.torchActive]}
+          scaleValue={0.9}
+        >
+          {torch ? (
+            <Flashlight size={20} color={WT.yellow} />
+          ) : (
+            <FlashlightOff size={20} color="#FFFFFF" />
+          )}
+        </AnimatedPressable>
+      </View>
+
+      {/* Zoom controls */}
+      <View style={styles.zoomBar}>
+        <AnimatedPressable
+          onPress={handleZoomOut}
+          disabled={zoom <= MIN_ZOOM}
+          style={styles.zoomBtn}
+          scaleValue={0.9}
+        >
+          <Minus size={18} color="#FFFFFF" />
+        </AnimatedPressable>
+        <View style={styles.zoomLabelBox}>
+          <Text style={styles.zoomLabelText}>{zoomLabel(zoom)}</Text>
+        </View>
+        <AnimatedPressable
+          onPress={handleZoomIn}
+          disabled={zoom >= MAX_ZOOM}
+          style={styles.zoomBtn}
+          scaleValue={0.9}
+        >
+          <Plus size={18} color="#FFFFFF" />
+        </AnimatedPressable>
       </View>
 
       {/* Bottom controls */}
@@ -190,7 +410,17 @@ export default function CameraScreen() {
           <View style={styles.shutterInner} />
         </AnimatedPressable>
 
-        <View style={{ width: 64 }} />
+        {/* "Done" shortcut if pages accumulated */}
+        {pages.length > 0 ? (
+          <AnimatedPressable onPress={handleFinishPages} style={styles.doneSideBtn} scaleValue={0.9}>
+            <Text style={styles.doneSideBtnText}>Done</Text>
+            <View style={styles.doneCountBadge}>
+              <Text style={styles.doneCountText}>{pages.length}</Text>
+            </View>
+          </AnimatedPressable>
+        ) : (
+          <View style={{ width: 64 }} />
+        )}
       </View>
     </View>
   );
@@ -203,6 +433,10 @@ const styles = StyleSheet.create({
   root: {
     flex: 1,
     backgroundColor: '#000000',
+  },
+  dimOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(0,0,0,0.35)',
   },
   permissionContainer: {
     alignItems: 'center',
@@ -265,6 +499,11 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
+  torchActive: {
+    backgroundColor: 'rgba(255,214,10,0.25)',
+    borderWidth: 1,
+    borderColor: WT.yellow,
+  },
   viewfinderContainer: {
     flex: 1,
     alignItems: 'center',
@@ -272,8 +511,8 @@ const styles = StyleSheet.create({
     gap: 20,
   },
   viewfinder: {
-    width: 280,
-    height: 200,
+    width: 290,
+    height: 210,
     position: 'relative',
   },
   corner: {
@@ -314,9 +553,50 @@ const styles = StyleSheet.create({
     borderBottomRightRadius: 4,
   },
   viewfinderHint: {
-    fontSize: 13,
-    color: 'rgba(255,255,255,0.7)',
+    fontSize: 12,
+    color: 'rgba(255,255,255,0.65)',
     textAlign: 'center',
+  },
+  pagesBadge: {
+    position: 'absolute',
+    alignSelf: 'center',
+    backgroundColor: WT.blue,
+    borderRadius: 12,
+    paddingHorizontal: 14,
+    paddingVertical: 5,
+  },
+  pagesBadgeText: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#FFFFFF',
+  },
+  zoomBar: {
+    position: 'absolute',
+    bottom: 140,
+    alignSelf: 'center',
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 0,
+    backgroundColor: 'rgba(0,0,0,0.55)',
+    borderRadius: 20,
+    paddingHorizontal: 4,
+    paddingVertical: 4,
+  },
+  zoomBtn: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  zoomLabelBox: {
+    minWidth: 48,
+    alignItems: 'center',
+  },
+  zoomLabelText: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#FFFFFF',
   },
   bottomBar: {
     position: 'absolute',
@@ -354,51 +634,97 @@ const styles = StyleSheet.create({
     borderRadius: 30,
     backgroundColor: '#FFFFFF',
   },
+  doneSideBtn: {
+    width: 64,
+    alignItems: 'center',
+    gap: 4,
+  },
+  doneSideBtnText: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: WT.blue,
+  },
+  doneCountBadge: {
+    backgroundColor: WT.blue,
+    borderRadius: 10,
+    minWidth: 20,
+    height: 20,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 6,
+  },
+  doneCountText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#FFFFFF',
+  },
   previewOverlay: {
     position: 'absolute',
     bottom: 0,
     left: 0,
     right: 0,
-    backgroundColor: 'rgba(0,0,0,0.7)',
-    paddingTop: 24,
-    paddingHorizontal: 24,
+    backgroundColor: 'rgba(0,0,0,0.80)',
+    paddingTop: 20,
+    paddingHorizontal: 20,
     alignItems: 'center',
-    gap: 16,
+    gap: 12,
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
   },
   previewLabel: {
     fontSize: 17,
-    fontWeight: '600',
+    fontWeight: '700',
     color: '#FFFFFF',
+  },
+  previewSub: {
+    fontSize: 12,
+    color: 'rgba(255,255,255,0.55)',
+    textAlign: 'center',
+    lineHeight: 18,
   },
   previewButtons: {
     flexDirection: 'row',
-    gap: 12,
+    gap: 10,
     width: '100%',
   },
   retakeBtn: {
     flex: 1,
-    backgroundColor: 'rgba(255,255,255,0.15)',
+    backgroundColor: 'rgba(255,255,255,0.12)',
     borderRadius: 14,
-    paddingVertical: 16,
+    paddingVertical: 14,
     alignItems: 'center',
     borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.2)',
+    borderColor: 'rgba(255,255,255,0.18)',
   },
   retakeBtnText: {
-    fontSize: 16,
+    fontSize: 15,
     fontWeight: '600',
     color: '#FFFFFF',
   },
-  usePhotoBtn: {
+  addPageBtn: {
     flex: 1,
+    backgroundColor: WT.blueMuted,
+    borderRadius: 14,
+    paddingVertical: 14,
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: WT.blue,
+  },
+  addPageBtnText: {
+    fontSize: 15,
+    fontWeight: '600',
+    color: WT.blue,
+  },
+  finishBtn: {
+    width: '100%',
     backgroundColor: WT.blue,
     borderRadius: 14,
     paddingVertical: 16,
     alignItems: 'center',
   },
-  usePhotoBtnText: {
+  finishBtnText: {
     fontSize: 16,
-    fontWeight: '600',
+    fontWeight: '700',
     color: '#FFFFFF',
   },
 });

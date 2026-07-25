@@ -14,6 +14,7 @@ import * as SecureStore from 'expo-secure-store';
 import { ArrowLeft, CheckCircle, Info, Key, Mic, Zap } from 'lucide-react-native';
 import { WT, OPENROUTER_API_KEY, STORAGE_KEYS } from '@/constants/wiretrace';
 import { loadTTSSettings, saveTTSSettings, TTSSettings } from '@/utils/tts';
+import { DEFAULT_UI_PREFERENCES, LayoutPreset, loadUIPreferences, saveUIPreferences, UIPreferences, VisualMode } from '@/utils/ui-preferences';
 
 function AnimatedPressable({
   onPress,
@@ -111,17 +112,20 @@ export default function SettingsScreen() {
     voice: 'default',
     autoAdvanceDelay: 'off',
   });
+  const [uiPrefs, setUiPrefs] = useState<UIPreferences>(DEFAULT_UI_PREFERENCES);
   const [saved, setSaved] = useState(false);
 
   useEffect(() => {
     const load = async () => {
       console.log('[Settings] Loading settings');
-      const [storedKey, ttsSettings] = await Promise.all([
+      const [storedKey, ttsSettings, storedUiPrefs] = await Promise.all([
         SecureStore.getItemAsync(STORAGE_KEYS.API_KEY),
         loadTTSSettings(),
+        loadUIPreferences(),
       ]);
       if (storedKey) setApiKey(storedKey);
       setSettings(ttsSettings);
+      setUiPrefs(storedUiPrefs);
     };
     load();
   }, []);
@@ -132,6 +136,7 @@ export default function SettingsScreen() {
       await Promise.all([
         SecureStore.setItemAsync(STORAGE_KEYS.API_KEY, apiKey),
         saveTTSSettings(settings),
+        saveUIPreferences(uiPrefs),
       ]);
       setSaved(true);
       setTimeout(() => setSaved(false), 2000);
@@ -143,6 +148,10 @@ export default function SettingsScreen() {
 
   const updateSettings = (patch: Partial<TTSSettings>) => {
     setSettings((prev) => ({ ...prev, ...patch }));
+  };
+
+  const updateUiPrefs = (patch: Partial<UIPreferences>) => {
+    setUiPrefs((prev) => ({ ...prev, ...patch }));
   };
 
   return (
@@ -250,6 +259,52 @@ export default function SettingsScreen() {
           />
           <Text style={styles.fieldHint}>
             Voice availability depends on your device's installed voices
+          </Text>
+        </View>
+
+        <View style={styles.section}>
+          <View style={styles.sectionHeader}>
+            <Info size={16} color={WT.blue} />
+            <Text style={styles.sectionTitle}>UI Visual Mode</Text>
+          </View>
+          <SegmentControl
+            options={['normalLight', 'highContrast', 'detailedSymbols'] as VisualMode[]}
+            value={uiPrefs.visualMode}
+            onChange={(v) => {
+              console.log('[Settings] Visual mode changed', { visualMode: v });
+              updateUiPrefs({ visualMode: v });
+            }}
+            labels={{
+              normalLight: 'Normal Light',
+              highContrast: 'High Contrast',
+              detailedSymbols: 'Detailed Symbols',
+            }}
+          />
+          <Text style={styles.fieldHint}>
+            Choose a visual mode for readability and symbol detail emphasis.
+          </Text>
+        </View>
+
+        <View style={styles.section}>
+          <View style={styles.sectionHeader}>
+            <Info size={16} color={WT.blue} />
+            <Text style={styles.sectionTitle}>Layout & Tool Preset</Text>
+          </View>
+          <SegmentControl
+            options={['industrial', 'residential', 'commercial'] as LayoutPreset[]}
+            value={uiPrefs.layoutPreset}
+            onChange={(v) => {
+              console.log('[Settings] Layout preset changed', { layoutPreset: v });
+              updateUiPrefs({ layoutPreset: v });
+            }}
+            labels={{
+              industrial: 'Industrial',
+              residential: 'Residential',
+              commercial: 'Commercial',
+            }}
+          />
+          <Text style={styles.fieldHint}>
+            Select a workflow layout tuned for industrial wiring, residential, or commercial jobs.
           </Text>
         </View>
 

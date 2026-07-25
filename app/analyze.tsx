@@ -333,7 +333,7 @@ export default function AnalyzeScreen() {
     const isLow = confidence < 0.5;
     return (
       <View style={[styles.confBadge, isLow ? styles.confBadgeLow : styles.confBadgeMed]}>
-        <Text style={styles.confBadgeText}>{Math.round(confidence * 100)}%</Text>
+        <Text style={[styles.confBadgeText, isLow && styles.confBadgeTextLow]}>{Math.round(confidence * 100)}%</Text>
       </View>
     );
   };
@@ -1204,5 +1204,8 @@ const styles = StyleSheet.create({
     fontSize: 10,
     fontWeight: '700',
     color: WT.yellow,
+  },
+  confBadgeTextLow: {
+    color: WT.red,
   },
 });

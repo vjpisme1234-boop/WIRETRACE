@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import {
   Animated,
+  Image,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -44,7 +45,7 @@ function AnimatedPressable({
 
 export default function IdentifySymbolScreen() {
   const insets = useSafeAreaInsets();
-  const params = useLocalSearchParams<{ schematicId: string; symbolId: string }>();
+  const params = useLocalSearchParams<{ schematicId: string; symbolId: string; imageUri?: string }>();
 
   const [selected, setSelected] = useState<string | null>(null);
   const [customText, setCustomText] = useState('');
@@ -130,7 +131,18 @@ export default function IdentifySymbolScreen() {
 
       {symbolDesc ? (
         <View style={styles.descBanner}>
-          <Text style={styles.descText}>{symbolDesc}</Text>
+          {params.imageUri ? (
+            <View style={styles.imageRow}>
+              <Image
+                source={{ uri: params.imageUri }}
+                style={styles.symbolThumb}
+                resizeMode="contain"
+              />
+              <Text style={[styles.descText, { flex: 1 }]}>{symbolDesc}</Text>
+            </View>
+          ) : (
+            <Text style={styles.descText}>{symbolDesc}</Text>
+          )}
         </View>
       ) : null}
 
@@ -248,6 +260,19 @@ const styles = StyleSheet.create({
     backgroundColor: WT.bgCard,
     borderRadius: 10,
     padding: 12,
+    borderWidth: 1,
+    borderColor: WT.border,
+  },
+  imageRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+  },
+  symbolThumb: {
+    width: 80,
+    height: 80,
+    borderRadius: 8,
+    backgroundColor: WT.bgCardAlt,
     borderWidth: 1,
     borderColor: WT.border,
   },

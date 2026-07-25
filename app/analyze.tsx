@@ -26,7 +26,7 @@ import {
   Zap,
 } from 'lucide-react-native';
 import { WT } from '@/constants/wiretrace';
-import { analyzeSchematic, AnalysisResult } from '@/utils/openrouter';
+import { analyzeSchematic, analyzeMultipleImages, AnalysisResult } from '@/utils/openrouter';
 import {
   generateSchematicName,
   getSchematic,
@@ -115,7 +115,7 @@ type StartPoint = 'beginning' | 'end' | 'specific';
 
 export default function AnalyzeScreen() {
   const insets = useSafeAreaInsets();
-  const params = useLocalSearchParams<{ imageUri?: string; schematicId?: string }>();
+  const params = useLocalSearchParams<{ imageUri?: string; imageUris?: string; schematicId?: string }>();
 
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -161,6 +161,7 @@ export default function AnalyzeScreen() {
         imageUri,
         analyzedAt: new Date().toISOString(),
         name: generateSchematicName(),
+        summary: result.summary,
         wireCount: result.wires?.length ?? 0,
         componentCount: result.components?.length ?? 0,
         wires: (result.wires ?? []).map((w) => ({ ...w } as WireInfo)),
@@ -182,6 +183,49 @@ export default function AnalyzeScreen() {
     }
   }, []);
 
+  const runMultiAnalysis = useCallback(async (imageUris: string[]) => {
+    setLoading(true);
+    setError(null);
+    console.log('[Analyze] Starting multi-page analysis', { pageCount: imageUris.length });
+
+    try {
+      console.log('[Analyze] Reading all images as base64');
+      const base64Images = await Promise.all(
+        imageUris.map((uri) =>
+          FileSystem.readAsStringAsync(uri, { encoding: FileSystem.EncodingType.Base64 })
+        )
+      );
+
+      console.log('[Analyze] Calling OpenRouter analyzeMultipleImages');
+      const result: AnalysisResult = await analyzeMultipleImages(base64Images);
+
+      const newSchematic: SchematicAnalysis = {
+        id: `sch_${Date.now()}`,
+        imageUri: imageUris[0],
+        analyzedAt: new Date().toISOString(),
+        name: generateSchematicName(),
+        summary: result.summary,
+        wireCount: result.wires?.length ?? 0,
+        componentCount: result.components?.length ?? 0,
+        wires: (result.wires ?? []).map((w) => ({ ...w } as WireInfo)),
+        components: (result.components ?? []).map((c) => ({ ...c } as ComponentInfo)),
+        connections: (result.connections ?? []).map((c) => ({ ...c } as Connection)),
+        unknownSymbols: (result.unknownSymbols ?? []).map((u) => ({ ...u } as UnknownSymbol)),
+        readingSteps: [],
+      };
+
+      await saveSchematic(newSchematic);
+      setSchematic(newSchematic);
+      console.log('[Analyze] Multi-page analysis complete', { id: newSchematic.id, wires: newSchematic.wireCount });
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : 'Analysis failed';
+      console.error('[Analyze] Multi-page analysis error', e);
+      setError(msg);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
   useEffect(() => {
     if (params.schematicId) {
       console.log('[Analyze] Loading existing schematic', { id: params.schematicId });
@@ -189,6 +233,10 @@ export default function AnalyzeScreen() {
         if (s) setSchematic(s);
         else setError('Schematic not found');
       });
+    } else if (params.imageUris) {
+      const uris = JSON.parse(params.imageUris as string) as string[];
+      console.log('[Analyze] Multi-page URIs received', { count: uris.length });
+      runMultiAnalysis(uris);
     } else if (params.imageUri) {
       runAnalysis(params.imageUri);
     }
@@ -252,7 +300,7 @@ export default function AnalyzeScreen() {
     console.log('[Analyze] Identify unknown symbol pressed', { symbolId });
     router.push({
       pathname: '/identify-symbol',
-      params: { schematicId: schematic.id, symbolId },
+      params: { schematicId: schematic.id, symbolId, imageUri: schematic.imageUri },
     });
   };
 
@@ -268,6 +316,27 @@ export default function AnalyzeScreen() {
   );
 
   const unknownCount = schematic?.unknownSymbols.filter((u) => !u.userIdentifiedAs).length ?? 0;
+
+  // Map color name to display hex (falls back to WT.blue)
+  const WIRE_COLOR_MAP: Record<string, string> = {
+    red: '#FF3B30', black: '#3A3A3C', white: '#FFFFFF', blue: '#007AFF',
+    yellow: '#FFD60A', green: '#34C759', orange: '#FF9500', brown: '#A2845E',
+    purple: '#AF52DE', violet: '#AF52DE', gray: '#8E8E93', grey: '#8E8E93',
+    pink: '#FF2D55', 'green-yellow': '#B8E000',
+  };
+  const wireColor = (color?: string) =>
+    (color && WIRE_COLOR_MAP[color.toLowerCase()]) || WT.blue;
+
+  // Confidence badge helper
+  const ConfBadge = ({ confidence }: { confidence?: number }) => {
+    if (confidence === undefined || confidence >= 0.8) return null;
+    const isLow = confidence < 0.5;
+    return (
+      <View style={[styles.confBadge, isLow ? styles.confBadgeLow : styles.confBadgeMed]}>
+        <Text style={styles.confBadgeText}>{Math.round(confidence * 100)}%</Text>
+      </View>
+    );
+  };
 
   return (
     <View style={[styles.root, { paddingTop: insets.top }]}>
@@ -362,6 +431,14 @@ export default function AnalyzeScreen() {
               </View>
             )}
 
+            {/* AI Summary */}
+            {schematic.summary ? (
+              <View style={styles.summaryCard}>
+                <Text style={styles.summaryLabel}>AI Summary</Text>
+                <Text style={styles.summaryText}>{schematic.summary}</Text>
+              </View>
+            ) : null}
+
             {/* Wire Summary */}
             <View style={styles.card}>
               <View style={styles.cardHeader}>
@@ -376,13 +453,19 @@ export default function AnalyzeScreen() {
               ) : (
                 schematic.wires.slice(0, 8).map((wire) => (
                   <View key={wire.id} style={styles.wireRow}>
-                    <View style={[styles.wireColorDot, { backgroundColor: wire.color || WT.blue }]} />
+                    <View style={[styles.wireColorDot, { backgroundColor: wireColor(wire.color) }]} />
                     <Text style={styles.wireLabel}>{wire.label}</Text>
                     <Text style={styles.wireRoute} numberOfLines={1}>
                       {wire.fromPoint}
                       {' → '}
                       {wire.toPoint}
                     </Text>
+                    {wire.voltage ? (
+                      <View style={styles.voltageBadge}>
+                        <Text style={styles.voltageBadgeText}>{wire.voltage}</Text>
+                      </View>
+                    ) : null}
+                    <ConfBadge confidence={wire.confidence} />
                   </View>
                 ))
               )}
@@ -416,6 +499,7 @@ export default function AnalyzeScreen() {
                           {comp.userIdentifiedAs || comp.type}
                         </Text>
                       </View>
+                      <ConfBadge confidence={comp.confidence} />
                     </View>
                     <Text style={styles.componentDesc} numberOfLines={2}>
                       {comp.description}
@@ -1069,5 +1153,56 @@ const styles = StyleSheet.create({
     fontSize: 17,
     fontWeight: '700',
     color: '#FFFFFF',
+  },
+  summaryCard: {
+    backgroundColor: WT.bgCard,
+    borderRadius: 14,
+    padding: 14,
+    borderWidth: 1,
+    borderColor: WT.border,
+    borderLeftWidth: 3,
+    borderLeftColor: WT.blue,
+    gap: 6,
+  },
+  summaryLabel: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: WT.blue,
+    textTransform: 'uppercase',
+    letterSpacing: 0.8,
+  },
+  summaryText: {
+    fontSize: 13,
+    color: WT.textSecondary,
+    lineHeight: 19,
+  },
+  voltageBadge: {
+    backgroundColor: WT.bgCardAlt,
+    borderRadius: 6,
+    paddingHorizontal: 5,
+    paddingVertical: 2,
+    borderWidth: 1,
+    borderColor: WT.border,
+  },
+  voltageBadgeText: {
+    fontSize: 10,
+    fontWeight: '600',
+    color: WT.textSecondary,
+  },
+  confBadge: {
+    borderRadius: 6,
+    paddingHorizontal: 5,
+    paddingVertical: 2,
+  },
+  confBadgeMed: {
+    backgroundColor: WT.yellowMuted,
+  },
+  confBadgeLow: {
+    backgroundColor: WT.redMuted,
+  },
+  confBadgeText: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: WT.yellow,
   },
 });

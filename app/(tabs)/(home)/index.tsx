@@ -11,7 +11,7 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { router, useFocusEffect } from 'expo-router';
-import { Camera, CircuitBoard, Clock, Settings, Zap } from 'lucide-react-native';
+import { BookOpen, Camera, CircuitBoard, Clock, Settings, Zap } from 'lucide-react-native';
 import { WT } from '@/constants/wiretrace';
 import { loadSchematics, SchematicAnalysis } from '@/utils/schematic-storage';
 
@@ -155,6 +155,11 @@ export default function HomeScreen() {
     router.push('/settings');
   };
 
+  const handleDictionary = () => {
+    console.log('[Home] Tapped Symbol Dictionary');
+    router.push('/symbol-dictionary');
+  };
+
   const topPad = insets.top + 16;
 
   return (
@@ -176,7 +181,7 @@ export default function HomeScreen() {
         contentContainerStyle={[styles.listContent, { paddingBottom: insets.bottom + 32 }]}
         ListHeaderComponent={
           <>
-            {/* Hero scan button */}
+            {/* Hero section */}
             <View style={styles.heroSection}>
               <Animated.View style={{ transform: [{ scale: scanScale }] }}>
                 <AnimatedPressable onPress={handleScan} style={styles.scanButton} scaleValue={0.96}>
@@ -187,6 +192,13 @@ export default function HomeScreen() {
                   </View>
                 </AnimatedPressable>
               </Animated.View>
+
+              {/* Symbol Dictionary quick-access */}
+              <AnimatedPressable onPress={handleDictionary} style={styles.dictBtn} scaleValue={0.97}>
+                <BookOpen size={18} color={WT.blue} />
+                <Text style={styles.dictBtnText}>Symbol Dictionary</Text>
+                <Text style={styles.dictBtnSub}>Reference guide for all standard symbols</Text>
+              </AnimatedPressable>
             </View>
 
             {/* Section header */}
@@ -282,6 +294,26 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: 'rgba(255,255,255,0.75)',
     fontWeight: '400',
+  },
+  dictBtn: {
+    backgroundColor: WT.bgCard,
+    borderRadius: 14,
+    padding: 16,
+    borderWidth: 1,
+    borderColor: WT.border,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+  },
+  dictBtnText: {
+    fontSize: 15,
+    fontWeight: '600',
+    color: WT.textPrimary,
+    flex: 1,
+  },
+  dictBtnSub: {
+    fontSize: 12,
+    color: WT.textSecondary,
   },
   sectionHeader: {
     flexDirection: 'row',

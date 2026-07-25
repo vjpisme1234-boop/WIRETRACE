@@ -13,13 +13,14 @@ import {
   ArrowLeft,
   CheckCircle,
   ChevronLeft,
-  Pause,
-  Play,
+  Mic,
+  MicOff,
   Volume2,
 } from 'lucide-react-native';
+import { ExpoSpeechRecognitionModule, useSpeechRecognitionEvent } from 'expo-speech-recognition';
 import { WT } from '@/constants/wiretrace';
 import { getSchematic, ReadingStep } from '@/utils/schematic-storage';
-import { speakText, stopSpeech, loadTTSSettings, getAutoAdvanceMs } from '@/utils/tts';
+import { speakText, stopSpeech } from '@/utils/tts';
 
 function AnimatedPressable({
   onPress,
@@ -56,13 +57,16 @@ export default function ReaderScreen() {
   const [currentIndex, setCurrentIndex] = useState(0);
   const [loading, setLoading] = useState(true);
   const [completed, setCompleted] = useState(false);
-  const [autoAdvance, setAutoAdvance] = useState(false);
-  const [autoAdvanceMs, setAutoAdvanceMs] = useState<number | null>(null);
+  const [voiceNextEnabled, setVoiceNextEnabled] = useState(true);
+  const [listeningForVoice, setListeningForVoice] = useState(false);
+  const [voiceStatus, setVoiceStatus] = useState('Say "next" when ready');
+  const [voiceError, setVoiceError] = useState<string | null>(null);
 
   const contentOpacity = useRef(new Animated.Value(0)).current;
   const contentTranslate = useRef(new Animated.Value(20)).current;
   const progressAnim = useRef(new Animated.Value(0)).current;
-  const autoTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const waitingForVoiceRef = useRef(false);
+  const commandHandledRef = useRef(false);
 
   const animateIn = useCallback(() => {
     contentOpacity.setValue(0);
@@ -88,10 +92,6 @@ export default function ReaderScreen() {
         stepsToUse = [...stepsToUse].reverse().map((s, i) => ({ ...s, stepNumber: i + 1 }));
       }
 
-      const settings = await loadTTSSettings();
-      const ms = getAutoAdvanceMs(settings.autoAdvanceDelay);
-      setAutoAdvanceMs(ms);
-
       setSteps(stepsToUse);
       setLoading(false);
       console.log('[Reader] Steps loaded', { count: stepsToUse.length });
@@ -99,11 +99,113 @@ export default function ReaderScreen() {
     load();
   }, []);
 
+  const stopVoiceListening = useCallback(() => {
+    waitingForVoiceRef.current = false;
+    setListeningForVoice(false);
+    try {
+      ExpoSpeechRecognitionModule.stop();
+    } catch {
+      // no-op
+    }
+  }, []);
+
+  const startVoiceListening = useCallback(async () => {
+    if (!voiceNextEnabled) return;
+    if (!ExpoSpeechRecognitionModule.isRecognitionAvailable()) {
+      setVoiceError('Voice recognition is unavailable on this device.');
+      return;
+    }
+
+    const permission = await ExpoSpeechRecognitionModule.requestPermissionsAsync();
+    if (!permission.granted) {
+      setVoiceError('Microphone permission is required for voice "next".');
+      return;
+    }
+
+    setVoiceError(null);
+    setVoiceStatus('Listening... say "next"');
+    setListeningForVoice(true);
+    waitingForVoiceRef.current = true;
+    commandHandledRef.current = false;
+    ExpoSpeechRecognitionModule.start({
+      lang: 'en-US',
+      interimResults: true,
+      continuous: true,
+      maxAlternatives: 1,
+      contextualStrings: ['next', 'go next', 'continue', 'previous', 'back', 'repeat'],
+    });
+  }, [voiceNextEnabled]);
+
+  const handleNext = useCallback(() => {
+    stopVoiceListening();
+    if (currentIndex >= steps.length - 1) {
+      console.log('[Reader] All steps complete');
+      stopSpeech();
+      setCompleted(true);
+      return;
+    }
+    console.log('[Reader] Next step pressed', { from: currentIndex, to: currentIndex + 1 });
+    setCurrentIndex((i) => i + 1);
+  }, [currentIndex, steps.length, stopVoiceListening]);
+
+  const handlePrev = useCallback(() => {
+    stopVoiceListening();
+    if (currentIndex <= 0) return;
+    console.log('[Reader] Previous step pressed', { from: currentIndex, to: currentIndex - 1 });
+    setCurrentIndex((i) => i - 1);
+  }, [currentIndex, stopVoiceListening]);
+
+  const handleReread = useCallback(() => {
+    stopVoiceListening();
+    if (steps.length === 0) return;
+    console.log('[Reader] Re-read button pressed', { step: currentIndex });
+    const step = steps[currentIndex];
+    speakText(step.instruction, () => {
+      console.log('[Reader] Speech done for step', currentIndex);
+      startVoiceListening();
+    });
+  }, [currentIndex, steps, startVoiceListening, stopVoiceListening]);
+
+  useSpeechRecognitionEvent('result', (event) => {
+    if (!waitingForVoiceRef.current) return;
+    const transcript = event.results?.[0]?.transcript?.toLowerCase?.() || '';
+    if (!transcript) return;
+    setVoiceStatus(`Heard: "${transcript}"`);
+    if (commandHandledRef.current) return;
+
+    if (transcript.includes('next') || transcript.includes('continue')) {
+      commandHandledRef.current = true;
+      handleNext();
+    } else if (transcript.includes('back') || transcript.includes('previous')) {
+      commandHandledRef.current = true;
+      handlePrev();
+    } else if (transcript.includes('repeat') || transcript.includes('again')) {
+      commandHandledRef.current = true;
+      handleReread();
+    }
+  });
+
+  useSpeechRecognitionEvent('error', (event) => {
+    if (!waitingForVoiceRef.current) return;
+    setVoiceError(event.message || 'Voice recognition failed.');
+    setListeningForVoice(false);
+    waitingForVoiceRef.current = false;
+  });
+
+  useSpeechRecognitionEvent('end', () => {
+    if (!waitingForVoiceRef.current || commandHandledRef.current || !voiceNextEnabled) return;
+    setListeningForVoice(false);
+    setVoiceStatus('Listening timed out. Tap mic to retry.');
+  });
+
   // Speak current step when it changes
   useEffect(() => {
     if (steps.length === 0 || loading) return;
     const step = steps[currentIndex];
     if (!step) return;
+
+    stopVoiceListening();
+    setVoiceStatus('Reading step...');
 
     console.log('[Reader] Displaying step', { index: currentIndex, stepNumber: step.stepNumber });
     animateIn();
@@ -117,56 +219,34 @@ export default function ReaderScreen() {
 
     speakText(step.instruction, () => {
       console.log('[Reader] Speech done for step', currentIndex);
-      if (autoAdvance && autoAdvanceMs) {
-        autoTimer.current = setTimeout(() => {
-          handleNext();
-        }, autoAdvanceMs);
-      }
+      startVoiceListening();
     });
+  }, [animateIn, currentIndex, loading, progressAnim, startVoiceListening, steps, stopVoiceListening]);
 
-    return () => {
-      if (autoTimer.current) clearTimeout(autoTimer.current);
-    };
-  }, [currentIndex, steps, loading]);
-
-  const handleNext = useCallback(() => {
-    if (autoTimer.current) clearTimeout(autoTimer.current);
-    if (currentIndex >= steps.length - 1) {
-      console.log('[Reader] All steps complete');
-      stopSpeech();
-      setCompleted(true);
-      return;
+  const handleToggleVoiceNext = () => {
+    const next = !voiceNextEnabled;
+    setVoiceNextEnabled(next);
+    if (!next) {
+      stopVoiceListening();
+      setVoiceStatus('Voice next is off');
+    } else {
+      setVoiceError(null);
+      setVoiceStatus('Say "next" when ready');
+      startVoiceListening();
     }
-    console.log('[Reader] Next step pressed', { from: currentIndex, to: currentIndex + 1 });
-    setCurrentIndex((i) => i + 1);
-  }, [currentIndex, steps.length]);
-
-  const handlePrev = useCallback(() => {
-    if (autoTimer.current) clearTimeout(autoTimer.current);
-    if (currentIndex <= 0) return;
-    console.log('[Reader] Previous step pressed', { from: currentIndex, to: currentIndex - 1 });
-    setCurrentIndex((i) => i - 1);
-  }, [currentIndex]);
-
-  const handleReread = () => {
-    if (steps.length === 0) return;
-    console.log('[Reader] Re-read button pressed', { step: currentIndex });
-    const step = steps[currentIndex];
-    speakText(step.instruction);
-  };
-
-  const handleToggleAutoAdvance = () => {
-    const next = !autoAdvance;
-    console.log('[Reader] Auto-advance toggled', { autoAdvance: next });
-    setAutoAdvance(next);
-    if (!next && autoTimer.current) clearTimeout(autoTimer.current);
   };
 
   const handleBack = () => {
     console.log('[Reader] Back button pressed');
+    stopVoiceListening();
     stopSpeech();
     router.back();
   };
+
+  useEffect(() => () => {
+    stopVoiceListening();
+    stopSpeech();
+  }, [stopVoiceListening]);
 
   // Swipe gesture
   const swipeGesture = Gesture.Pan()
@@ -231,11 +311,11 @@ export default function ReaderScreen() {
             <ArrowLeft size={22} color={WT.textSecondary} />
           </AnimatedPressable>
           <Text style={styles.counterText}>{counterText}</Text>
-          <AnimatedPressable onPress={handleToggleAutoAdvance} style={styles.autoBtn} scaleValue={0.9}>
-            {autoAdvance ? (
-              <Pause size={20} color={WT.blue} />
+          <AnimatedPressable onPress={handleToggleVoiceNext} style={styles.autoBtn} scaleValue={0.9}>
+            {voiceNextEnabled ? (
+              <Mic size={20} color={listeningForVoice ? WT.green : WT.blue} />
             ) : (
-              <Play size={20} color={WT.textSecondary} />
+              <MicOff size={20} color={WT.textSecondary} />
             )}
           </AnimatedPressable>
         </View>
@@ -265,6 +345,13 @@ export default function ReaderScreen() {
               <Text style={styles.specialText}>{step.specialInstruction}</Text>
             </View>
           )}
+          <View style={styles.voiceStatusBox}>
+            <Text style={styles.voiceStatusLabel}>
+              {voiceNextEnabled ? (listeningForVoice ? 'VOICE READY' : 'VOICE WAIT') : 'VOICE OFF'}
+            </Text>
+            <Text style={styles.voiceStatusText}>{voiceStatus}</Text>
+            {voiceError ? <Text style={styles.voiceErrorText}>{voiceError}</Text> : null}
+          </View>
         </Animated.View>
 
         {/* Bottom controls */}
@@ -285,6 +372,12 @@ export default function ReaderScreen() {
             <AnimatedPressable onPress={handleReread} style={styles.rereadBtn} scaleValue={0.9}>
               <Volume2 size={20} color={WT.textSecondary} />
             </AnimatedPressable>
+
+            {voiceNextEnabled && (
+              <AnimatedPressable onPress={startVoiceListening} style={styles.voiceRetryBtn} scaleValue={0.9}>
+                <Mic size={18} color={WT.blue} />
+              </AnimatedPressable>
+            )}
           </View>
 
           <AnimatedPressable onPress={handleNext} style={styles.nextBtn} scaleValue={0.97}>
@@ -403,6 +496,30 @@ const styles = StyleSheet.create({
     fontStyle: 'italic',
     lineHeight: 20,
   },
+  voiceStatusBox: {
+    backgroundColor: WT.bgCard,
+    borderRadius: 12,
+    padding: 12,
+    borderWidth: 1,
+    borderColor: WT.border,
+    gap: 4,
+  },
+  voiceStatusLabel: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: WT.blue,
+    textTransform: 'uppercase',
+    letterSpacing: 0.8,
+  },
+  voiceStatusText: {
+    fontSize: 13,
+    color: WT.textSecondary,
+    lineHeight: 19,
+  },
+  voiceErrorText: {
+    fontSize: 12,
+    color: WT.red,
+  },
   bottomControls: {
     paddingHorizontal: 20,
     paddingTop: 16,
@@ -440,6 +557,16 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     borderWidth: 1,
     borderColor: WT.border,
+  },
+  voiceRetryBtn: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: WT.blueMuted,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: WT.blue,
   },
   nextBtn: {
     backgroundColor: WT.blue,

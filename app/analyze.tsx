@@ -132,6 +132,7 @@ export default function AnalyzeScreen() {
   const [generatingSteps, setGeneratingSteps] = useState(false);
   const [aiQuestion, setAiQuestion] = useState('');
   const [aiAnswer, setAiAnswer] = useState<string | null>(null);
+  const [aiSuggestions, setAiSuggestions] = useState<string | null>(null);
   const [askingAi, setAskingAi] = useState(false);
   const [highlightKey, setHighlightKey] = useState<string | null>(null);
 
@@ -342,6 +343,33 @@ export default function AnalyzeScreen() {
     }
   };
 
+  const handleGetSuggestions = async () => {
+    if (!schematic || askingAi) return;
+    setAskingAi(true);
+    setAiSuggestions(null);
+    setError(null);
+    try {
+      const { answerSchematicQuestion } = await import('@/utils/openrouter');
+      const suggestions = await answerSchematicQuestion(
+        {
+          wires: schematic.wires,
+          components: schematic.components,
+          connections: schematic.connections,
+          unknownSymbols: schematic.unknownSymbols,
+          summary: schematic.summary ?? '',
+        },
+        'Give concise suggestions for what I should do next while working on this schematic. Include checks, safety reminders, and one likely troubleshooting step.'
+      );
+      setAiSuggestions(suggestions);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : 'Failed to get AI suggestions';
+      console.error('[Analyze] AI suggestions error', e);
+      setError(msg);
+    } finally {
+      setAskingAi(false);
+    }
+  };
+
   const allItems = schematic
     ? [
         ...schematic.wires.map((w) => w.label),
@@ -485,6 +513,19 @@ export default function AnalyzeScreen() {
               <Text style={styles.aiHelperText}>
                 Ask a question or request guidance while using this schematic.
               </Text>
+              <AnimatedPressable
+                onPress={handleGetSuggestions}
+                style={[styles.aiSuggestBtn, askingAi && styles.aiAskBtnDisabled]}
+                disabled={askingAi}
+              >
+                <Text style={styles.aiSuggestBtnText}>{askingAi ? 'Working...' : 'Get AI Suggestions'}</Text>
+              </AnimatedPressable>
+              {aiSuggestions ? (
+                <View style={styles.aiAnswerBox}>
+                  <Text style={styles.aiAnswerLabel}>Suggestions</Text>
+                  <Text style={styles.aiAnswerText}>{aiSuggestions}</Text>
+                </View>
+              ) : null}
               <TextInput
                 style={styles.aiInput}
                 placeholder="Example: what should I check first if wire 14 has no voltage?"
@@ -503,6 +544,7 @@ export default function AnalyzeScreen() {
               </AnimatedPressable>
               {aiAnswer ? (
                 <View style={styles.aiAnswerBox}>
+                  <Text style={styles.aiAnswerLabel}>Answer</Text>
                   <Text style={styles.aiAnswerText}>{aiAnswer}</Text>
                 </View>
               ) : null}
@@ -961,6 +1003,19 @@ const styles = StyleSheet.create({
     color: WT.textPrimary,
     textAlignVertical: 'top',
   },
+  aiSuggestBtn: {
+    backgroundColor: WT.bgCardAlt,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: WT.border,
+    paddingVertical: 9,
+    alignItems: 'center',
+  },
+  aiSuggestBtnText: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: WT.textPrimary,
+  },
   aiAskBtn: {
     backgroundColor: WT.blue,
     borderRadius: 10,
@@ -990,6 +1045,14 @@ const styles = StyleSheet.create({
     fontSize: 13,
     color: WT.textPrimary,
     lineHeight: 19,
+  },
+  aiAnswerLabel: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: WT.blue,
+    textTransform: 'uppercase',
+    letterSpacing: 0.8,
+    marginBottom: 5,
   },
   highlightHint: {
     flexDirection: 'row',

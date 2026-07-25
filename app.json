@@ -45,6 +45,7 @@
       "expo-web-browser",
       "expo-secure-store",
       "expo-camera",
+      "expo-speech-recognition",
       [
         "expo-image-picker",
         {

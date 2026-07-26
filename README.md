@@ -9,7 +9,7 @@ WireTrace AI is an Expo / React Native app for capturing, analyzing, and reading
 
 ## Install
 
-From `/home/runner/work/WIRETRACE/WIRETRACE`:
+From the project root:
 
 ```bash
 npm install --legacy-peer-deps
@@ -59,7 +59,7 @@ The app uses OpenRouter for AI-powered schematic analysis.
 
 ## EAS build profiles
 
-`/home/runner/work/WIRETRACE/WIRETRACE/eas.json` includes:
+`eas.json` includes:
 
 - `development` for internal development client builds
 - `preview` for internal Android APK builds

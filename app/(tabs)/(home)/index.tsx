@@ -17,8 +17,8 @@ import { WT } from '@/constants/wiretrace';
 import { loadSchematics, SchematicAnalysis } from '@/utils/schematic-storage';
 
 const HOME_BACKGROUND = require('../../../assets/images/newly.png');
-const HOME_BACKGROUND_IMAGE_OPACITY = 0.42;
-const HOME_BACKGROUND_OVERLAY = 'rgba(10,10,15,0.72)';
+const HOME_BACKGROUND_IMAGE_OPACITY = 0.58;
+const HOME_BACKGROUND_OVERLAY = 'rgba(10,10,15,0.58)';
 
 function resolveImageSource(source: string | number | ImageSourcePropType | undefined): ImageSourcePropType {
   if (!source) return { uri: '' };

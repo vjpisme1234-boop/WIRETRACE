@@ -17,8 +17,8 @@ import { WT } from '@/constants/wiretrace';
 import { loadSchematics, SchematicAnalysis } from '@/utils/schematic-storage';
 
 const HOME_BACKGROUND = require('../../../assets/images/newly.png');
-const HOME_BACKGROUND_IMAGE_OPACITY = 0.58;
-const HOME_BACKGROUND_OVERLAY = 'rgba(10,10,15,0.58)';
+const HOME_BACKGROUND_IMAGE_OPACITY = 1;
+const HOME_BACKGROUND_OVERLAY = 'rgba(10,10,15,0.42)';
 
 function resolveImageSource(source: string | number | ImageSourcePropType | undefined): ImageSourcePropType {
   if (!source) return { uri: '' };
@@ -192,9 +192,6 @@ export default function HomeScreen() {
           <>
             {/* Hero scan button */}
             <View style={styles.heroSection}>
-              <View style={styles.heroImageFrame}>
-                <Image source={HOME_BACKGROUND} style={styles.heroImage} resizeMode="cover" />
-              </View>
               <Animated.View style={{ transform: [{ scale: scanScale }] }}>
                 <AnimatedPressable onPress={handleScan} style={styles.scanButton} scaleValue={0.96}>
                   <View style={styles.scanButtonInner}>
@@ -285,21 +282,8 @@ const styles = StyleSheet.create({
     paddingHorizontal: 20,
   },
   heroSection: {
-    paddingTop: 28,
+    paddingTop: 40,
     paddingBottom: 32,
-    gap: 16,
-  },
-  heroImageFrame: {
-    height: 180,
-    borderRadius: 24,
-    overflow: 'hidden',
-    borderWidth: 1,
-    borderColor: WT.borderStrong,
-    backgroundColor: WT.bgCard,
-  },
-  heroImage: {
-    width: '100%',
-    height: '100%',
   },
   scanButton: {
     backgroundColor: WT.blue,

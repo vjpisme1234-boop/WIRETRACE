@@ -244,11 +244,11 @@ const styles = StyleSheet.create({
     ...StyleSheet.absoluteFillObject,
   },
   backgroundImageAsset: {
-    opacity: 0.26,
+    opacity: 0.42,
   },
   backgroundOverlay: {
     flex: 1,
-    backgroundColor: 'rgba(10,10,15,0.84)',
+    backgroundColor: 'rgba(10,10,15,0.72)',
   },
   header: {
     flexDirection: 'row',

@@ -1,17 +1,13 @@
 import { SymbolView, SymbolViewProps, SymbolWeight } from "expo-symbols";
-import { StyleProp, ViewStyle } from "react-native";
+import { Pressable, StyleProp, ViewStyle } from "react-native";
 
 export function IconSymbol({
   ios_icon_name,
-  android_material_icon_name,
   size = 24,
   color,
   style,
   weight = "regular",
   onPress,
-  onClick,
-  onMouseOver,
-  onMouseLeave,
   testID,
   accessibilityLabel,
 }: {
@@ -22,18 +18,11 @@ export function IconSymbol({
   style?: StyleProp<ViewStyle>;
   weight?: SymbolWeight;
   onPress?: any;
-  onClick?: any;
-  onMouseOver?: any;
-  onMouseLeave?: any;
   testID?: any;
   accessibilityLabel?: any;
 }) {
-  return (
+  const symbol = (
     <SymbolView
-      onPress={onPress}
-      onClick={onClick}
-      onMouseOver={onMouseOver}
-      onMouseLeave={onMouseLeave}
       testID={testID}
       accessibilityLabel={accessibilityLabel}
       weight={weight}
@@ -49,4 +38,10 @@ export function IconSymbol({
       ]}
     />
   );
+
+  if (onPress) {
+    return <Pressable onPress={onPress}>{symbol}</Pressable>;
+  }
+
+  return symbol;
 }

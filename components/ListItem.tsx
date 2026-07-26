@@ -37,7 +37,7 @@ export default function ListItem({ listId }: { listId: string }) {
         }}
       >
         <Reanimated.View style={[styleAnimation, styles.rightAction]}>
-          <IconSymbol name="trash.fill" size={24} color="white" />
+          <IconSymbol ios_icon_name="trash.fill" android_material_icon_name="delete" size={24} color="white" />
         </Reanimated.View>
       </Pressable>
     );
@@ -52,7 +52,6 @@ export default function ListItem({ listId }: { listId: string }) {
         rightThreshold={40}
         renderRightActions={RightAction}
         overshootRight={false}
-        enableContextMenu
       >
         <View style={styles.listItemContainer}>
           <Text style={[styles.listItemText, { color: isDark ? "#FFFFFF" : "#000000" }]}>{listId}</Text>

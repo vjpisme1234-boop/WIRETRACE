@@ -192,6 +192,9 @@ export default function HomeScreen() {
           <>
             {/* Hero scan button */}
             <View style={styles.heroSection}>
+              <View style={styles.heroImageFrame}>
+                <Image source={HOME_BACKGROUND} style={styles.heroImage} resizeMode="cover" />
+              </View>
               <Animated.View style={{ transform: [{ scale: scanScale }] }}>
                 <AnimatedPressable onPress={handleScan} style={styles.scanButton} scaleValue={0.96}>
                   <View style={styles.scanButtonInner}>
@@ -284,6 +287,19 @@ const styles = StyleSheet.create({
   heroSection: {
     paddingTop: 28,
     paddingBottom: 32,
+    gap: 16,
+  },
+  heroImageFrame: {
+    height: 180,
+    borderRadius: 24,
+    overflow: 'hidden',
+    borderWidth: 1,
+    borderColor: WT.borderStrong,
+    backgroundColor: WT.bgCard,
+  },
+  heroImage: {
+    width: '100%',
+    height: '100%',
   },
   scanButton: {
     backgroundColor: WT.blue,

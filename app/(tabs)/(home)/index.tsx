@@ -3,6 +3,7 @@ import {
   Animated,
   FlatList,
   Image,
+  ImageBackground,
   ImageSourcePropType,
   Pressable,
   StyleSheet,
@@ -14,6 +15,8 @@ import { router, useFocusEffect } from 'expo-router';
 import { Camera, CircuitBoard, Clock, Settings, Zap } from 'lucide-react-native';
 import { WT } from '@/constants/wiretrace';
 import { loadSchematics, SchematicAnalysis } from '@/utils/schematic-storage';
+
+const HOME_BACKGROUND = require('../../../assets/images/newly.png');
 
 function resolveImageSource(source: string | number | ImageSourcePropType | undefined): ImageSourcePropType {
   if (!source) return { uri: '' };
@@ -159,6 +162,15 @@ export default function HomeScreen() {
 
   return (
     <View style={styles.root}>
+      <ImageBackground
+        source={HOME_BACKGROUND}
+        resizeMode="cover"
+        style={styles.backgroundImage}
+        imageStyle={styles.backgroundImageAsset}
+      >
+        <View style={styles.backgroundOverlay} />
+      </ImageBackground>
+
       {/* Header */}
       <View style={[styles.header, { paddingTop: topPad }]}>
         <View style={styles.headerLeft}>
@@ -227,6 +239,16 @@ const styles = StyleSheet.create({
   root: {
     flex: 1,
     backgroundColor: WT.bg,
+  },
+  backgroundImage: {
+    ...StyleSheet.absoluteFillObject,
+  },
+  backgroundImageAsset: {
+    opacity: 0.26,
+  },
+  backgroundOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(10,10,15,0.84)',
   },
   header: {
     flexDirection: 'row',

@@ -7,7 +7,7 @@ import {
   View,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { router, useLocalSearchParams } from 'expo-router';
+import { router, useFocusEffect, useLocalSearchParams } from 'expo-router';
 import { GestureDetector, Gesture } from 'react-native-gesture-handler';
 import {
   ArrowLeft,
@@ -19,9 +19,42 @@ import {
 } from 'lucide-react-native';
 import { ExpoSpeechRecognitionModule, useSpeechRecognitionEvent } from 'expo-speech-recognition';
 import { WT } from '@/constants/wiretrace';
-import { getSchematic, ReadingStep } from '@/utils/schematic-storage';
-import { speakText, stopSpeech } from '@/utils/tts';
+import { getSchematic, ReadingStep, SchematicAnalysis } from '@/utils/schematic-storage';
+import { answerSchematicQuestion } from '@/utils/openrouter';
+import { loadTTSSettings, speakText, stopSpeech } from '@/utils/tts';
 import { DEFAULT_UI_PREFERENCES, loadUIPreferences } from '@/utils/ui-preferences';
+
+const WIRE_COLOR_MAP: Record<string, string> = {
+  red: '#FF3B30',
+  black: '#3A3A3C',
+  white: '#FFFFFF',
+  blue: '#007AFF',
+  yellow: '#FFD60A',
+  green: '#34C759',
+  orange: '#FF9500',
+  brown: '#A2845E',
+  purple: '#AF52DE',
+  violet: '#AF52DE',
+  gray: '#8E8E93',
+  grey: '#8E8E93',
+  pink: '#FF2D55',
+  'green-yellow': '#B8E000',
+};
+
+function normalizeWireLabel(value?: string): string {
+  return String(value || '')
+    .toLowerCase()
+    .replace(/^wire\s+/, '')
+    .trim();
+}
+
+function getStepWireColor(step: ReadingStep, schematic: SchematicAnalysis | null): string | null {
+  if (!schematic || !step.wireLabel) return null;
+  const label = normalizeWireLabel(step.wireLabel);
+  const match = schematic.wires.find((wire) => normalizeWireLabel(wire.label) === label);
+  if (!match?.color) return null;
+  return WIRE_COLOR_MAP[match.color.toLowerCase()] || null;
+}
 
 function AnimatedPressable({
   onPress,
@@ -63,12 +96,15 @@ export default function ReaderScreen() {
   const [voiceStatus, setVoiceStatus] = useState('Say "next" when ready');
   const [voiceError, setVoiceError] = useState<string | null>(null);
   const [uiPrefs, setUiPrefs] = useState(DEFAULT_UI_PREFERENCES);
+  const [schematicForHelp, setSchematicForHelp] = useState<SchematicAnalysis | null>(null);
+  const [speechLanguage, setSpeechLanguage] = useState<'english' | 'spanish'>('english');
 
   const contentOpacity = useRef(new Animated.Value(0)).current;
   const contentTranslate = useRef(new Animated.Value(20)).current;
   const progressAnim = useRef(new Animated.Value(0)).current;
   const waitingForVoiceRef = useRef(false);
   const commandHandledRef = useRef(false);
+  const listeningModeRef = useRef<'command' | 'helpQuestion'>('command');
 
   const animateIn = useCallback(() => {
     contentOpacity.setValue(0);
@@ -77,7 +113,7 @@ export default function ReaderScreen() {
       Animated.timing(contentOpacity, { toValue: 1, duration: 300, useNativeDriver: true }),
       Animated.timing(contentTranslate, { toValue: 0, duration: 300, useNativeDriver: true }),
     ]).start();
-  }, []);
+  }, [contentOpacity, contentTranslate]);
 
   useEffect(() => {
     const load = async () => {
@@ -88,6 +124,7 @@ export default function ReaderScreen() {
         router.back();
         return;
       }
+      setSchematicForHelp(schematic);
 
       let stepsToUse = schematic.readingSteps;
       if (params.direction === 'backward') {
@@ -99,23 +136,56 @@ export default function ReaderScreen() {
       console.log('[Reader] Steps loaded', { count: stepsToUse.length });
     };
     load();
-  }, []);
+  }, [params.direction, params.schematicId]);
 
-  useEffect(() => {
-    loadUIPreferences().then(setUiPrefs);
-  }, []);
+  useFocusEffect(
+    useCallback(() => {
+      let isMounted = true;
+      loadUIPreferences()
+        .then((prefs) => {
+          if (isMounted) setUiPrefs(prefs);
+        })
+        .catch((error) => {
+          console.error('[Reader] Failed to refresh UI preferences', error);
+        });
+      return () => {
+        isMounted = false;
+      };
+    }, [])
+  );
+
+  useFocusEffect(
+    useCallback(() => {
+      let isMounted = true;
+      loadTTSSettings()
+        .then((settings) => {
+          if (isMounted) {
+            setSpeechLanguage(settings.language);
+            setVoiceStatus(
+              settings.language === 'spanish' ? 'Di "siguiente" cuando estés listo' : 'Say "next" when ready'
+            );
+          }
+        })
+        .catch((error) => {
+          console.error('[Reader] Failed to load TTS settings', error);
+        });
+      return () => {
+        isMounted = false;
+      };
+    }, [])
+  );
 
   const stopVoiceListening = useCallback(() => {
     waitingForVoiceRef.current = false;
     setListeningForVoice(false);
     try {
       ExpoSpeechRecognitionModule.stop();
-    } catch {
-      // no-op
+    } catch (error) {
+      console.error('[Reader] Failed to stop voice recognition', error);
     }
   }, []);
 
-  const startVoiceListening = useCallback(async () => {
+  const startVoiceListening = useCallback(async (mode: 'command' | 'helpQuestion' = 'command') => {
     if (!voiceNextEnabled) return;
     if (!ExpoSpeechRecognitionModule.isRecognitionAvailable()) {
       setVoiceError('Voice recognition is unavailable on this device.');
@@ -129,18 +199,39 @@ export default function ReaderScreen() {
     }
 
     setVoiceError(null);
-    setVoiceStatus('Listening... say "next"');
+    listeningModeRef.current = mode;
+    setVoiceStatus(
+      mode === 'command'
+        ? speechLanguage === 'spanish'
+          ? 'Escuchando... di "siguiente", "regresa", o "ayuda"'
+          : 'Listening... say "next", "go back", or "help"'
+        : speechLanguage === 'spanish'
+        ? 'Escuchando... dime qué necesitas'
+        : 'Listening... tell me what you need help with'
+    );
     setListeningForVoice(true);
     waitingForVoiceRef.current = true;
     commandHandledRef.current = false;
     ExpoSpeechRecognitionModule.start({
-      lang: 'en-US',
+      lang: speechLanguage === 'spanish' ? 'es-US' : 'en-US',
       interimResults: true,
       continuous: true,
       maxAlternatives: 1,
-      contextualStrings: ['next', 'go next', 'continue', 'previous', 'back', 'repeat'],
+      contextualStrings:
+        speechLanguage === 'spanish'
+          ? ['siguiente', 'continuar', 'regresa', 'atras', 'repite', 'ayuda']
+          : ['next', 'go next', 'continue', 'go back', 'previous', 'back', 'repeat', 'help'],
     });
-  }, [voiceNextEnabled]);
+  }, [voiceNextEnabled, speechLanguage]);
+
+  const parseTranscript = (event: any): string => {
+    const rawResults = Array.isArray(event?.results) ? event.results : [];
+    for (let i = rawResults.length - 1; i >= 0; i -= 1) {
+      const text = rawResults[i]?.transcript;
+      if (typeof text === 'string' && text.trim()) return text.trim().toLowerCase();
+    }
+    return '';
+  };
 
   const handleNext = useCallback(() => {
     stopVoiceListening();
@@ -172,22 +263,112 @@ export default function ReaderScreen() {
     });
   }, [currentIndex, steps, startVoiceListening, stopVoiceListening]);
 
+  const handleHelpQuestion = useCallback(async (question: string) => {
+    if (!schematicForHelp) {
+      setVoiceError(
+        speechLanguage === 'spanish'
+          ? 'No hay contexto del esquema para ayuda de AI.'
+          : 'Schematic context is unavailable for AI help.'
+      );
+      setVoiceStatus(
+        speechLanguage === 'spanish'
+          ? 'Ayuda no disponible. Di "siguiente" o toca el micro.'
+          : 'Help unavailable. Say "next" or tap mic to continue.'
+      );
+      startVoiceListening('command');
+      return;
+    }
+
+    setVoiceStatus('Getting AI help...');
+    try {
+      const answer = await answerSchematicQuestion(
+        {
+          wires: schematicForHelp.wires,
+          components: schematicForHelp.components,
+          connections: schematicForHelp.connections,
+          unknownSymbols: schematicForHelp.unknownSymbols,
+          summary: schematicForHelp.summary ?? '',
+        },
+        question
+      );
+      setVoiceStatus(`AI: ${answer}`);
+      await speakText(answer, () => {
+        startVoiceListening('command');
+      });
+    } catch (error) {
+      console.error('[Reader] AI help request failed', error);
+      setVoiceError(
+        speechLanguage === 'spanish'
+          ? 'La ayuda de AI falló. Di "ayuda" para reintentar.'
+          : 'AI help failed. Say "help" to try again.'
+      );
+      setVoiceStatus(
+        speechLanguage === 'spanish'
+          ? 'La ayuda de AI falló. Di "ayuda" para reintentar.'
+          : 'AI help failed. Say "help" to try again.'
+      );
+      startVoiceListening('command');
+    }
+  }, [schematicForHelp, speechLanguage, startVoiceListening]);
+
   useSpeechRecognitionEvent('result', (event) => {
     if (!waitingForVoiceRef.current) return;
-    const transcript = event.results?.[0]?.transcript?.toLowerCase?.() || '';
+    const transcript = parseTranscript(event);
     if (!transcript) return;
     setVoiceStatus(`Heard: "${transcript}"`);
     if (commandHandledRef.current) return;
 
-    if (transcript.includes('next') || transcript.includes('continue')) {
+    if (listeningModeRef.current === 'helpQuestion') {
+      if (transcript.length < 4) return;
+      commandHandledRef.current = true;
+      stopVoiceListening();
+      void handleHelpQuestion(transcript);
+      return;
+    }
+
+    const wantsNext =
+      transcript.includes('next') ||
+      transcript.includes('continue') ||
+      transcript.includes('siguiente') ||
+      transcript.includes('continuar');
+    const wantsBack =
+      transcript.includes('go back') ||
+      transcript.includes('back') ||
+      transcript.includes('previous') ||
+      transcript.includes('regresa') ||
+      transcript.includes('atras');
+    const wantsRepeat =
+      transcript.includes('repeat') ||
+      transcript.includes('again') ||
+      transcript.includes('repite') ||
+      transcript.includes('otra vez');
+    const wantsHelp = transcript.includes('help') || transcript.includes('ayuda');
+
+    if (wantsNext) {
       commandHandledRef.current = true;
       handleNext();
-    } else if (transcript.includes('back') || transcript.includes('previous')) {
+    } else if (wantsBack) {
       commandHandledRef.current = true;
       handlePrev();
-    } else if (transcript.includes('repeat') || transcript.includes('again')) {
+    } else if (wantsRepeat) {
       commandHandledRef.current = true;
       handleReread();
+    } else if (wantsHelp) {
+      commandHandledRef.current = true;
+      stopVoiceListening();
+      setVoiceStatus(
+        speechLanguage === 'spanish'
+          ? 'Ayuda solicitada. Haz tu pregunta después del mensaje.'
+          : 'Help requested. Ask your question after the prompt.'
+      );
+      speakText(
+        speechLanguage === 'spanish'
+          ? 'Claro. ¿En qué necesitas ayuda?'
+          : 'Sure. What do you need help with?',
+        () => {
+        startVoiceListening('helpQuestion');
+        }
+      );
     }
   });
 
@@ -201,8 +382,20 @@ export default function ReaderScreen() {
   useSpeechRecognitionEvent('end', () => {
     if (!waitingForVoiceRef.current || commandHandledRef.current || !voiceNextEnabled) return;
     setListeningForVoice(false);
-    setVoiceStatus('Listening timed out. Tap mic to retry.');
-  });
+    if (listeningModeRef.current === 'helpQuestion') {
+      setVoiceStatus(
+        speechLanguage === 'spanish'
+          ? 'No escuché tu pregunta. Di "ayuda" para intentar otra vez.'
+          : 'I did not hear your help question. Say "help" to try again.'
+      );
+    } else {
+      setVoiceStatus(
+        speechLanguage === 'spanish'
+          ? 'Tiempo de escucha agotado. Toca el micro o repite el comando.'
+          : 'Listening timed out. Tap mic or say command again.'
+      );
+    }
+  }, [speechLanguage, voiceNextEnabled]);
 
   // Speak current step when it changes
   useEffect(() => {
@@ -237,8 +430,8 @@ export default function ReaderScreen() {
       setVoiceStatus('Voice next is off');
     } else {
       setVoiceError(null);
-      setVoiceStatus('Say "next" when ready');
-      startVoiceListening();
+      setVoiceStatus(speechLanguage === 'spanish' ? 'Di "siguiente" cuando estés listo' : 'Say "next" when ready');
+      startVoiceListening('command');
     }
   };
 
@@ -270,7 +463,7 @@ export default function ReaderScreen() {
   if (loading) {
     return (
       <View style={[styles.root, styles.centered]}>
-        <Text style={styles.loadingText}>Loading steps...</Text>
+        <Text style={styles.loadingText}>{speechLanguage === 'spanish' ? 'Cargando pasos...' : 'Loading steps...'}</Text>
       </View>
     );
   }
@@ -281,13 +474,13 @@ export default function ReaderScreen() {
         <View style={styles.completedIcon}>
           <CheckCircle size={48} color={WT.green} />
         </View>
-        <Text style={styles.completedTitle}>Schematic Complete!</Text>
+        <Text style={styles.completedTitle}>{speechLanguage === 'spanish' ? '¡Esquema completado!' : 'Schematic Complete!'}</Text>
         <Text style={styles.completedSub}>
           {steps.length}
-          {' steps read successfully'}
+          {speechLanguage === 'spanish' ? ' pasos leídos correctamente' : ' steps read successfully'}
         </Text>
         <AnimatedPressable onPress={handleBack} style={styles.doneBtn}>
-          <Text style={styles.doneBtnText}>Done</Text>
+          <Text style={styles.doneBtnText}>{speechLanguage === 'spanish' ? 'Listo' : 'Done'}</Text>
         </AnimatedPressable>
       </View>
     );
@@ -295,6 +488,7 @@ export default function ReaderScreen() {
 
   const step = steps[currentIndex];
   if (!step) return null;
+  const stepWireColor = getStepWireColor(step, schematicForHelp);
 
   const progressWidth = progressAnim.interpolate({
     inputRange: [0, 1],
@@ -302,6 +496,7 @@ export default function ReaderScreen() {
   });
 
   const counterText = `${currentIndex + 1} of ${steps.length}`;
+  const isLightMode = uiPrefs.visualMode === 'normalLight';
   const isHighContrast = uiPrefs.visualMode === 'highContrast';
   const isDetailedSymbols = uiPrefs.visualMode === 'detailedSymbols';
   const isResidentialLayout = uiPrefs.layoutPreset === 'residential';
@@ -309,7 +504,15 @@ export default function ReaderScreen() {
 
   return (
     <GestureDetector gesture={swipeGesture}>
-      <View style={[styles.root, isHighContrast && styles.rootHighContrast, { paddingTop: insets.top }]}>
+      <View
+        style={[
+          styles.root,
+          isLightMode && styles.rootLight,
+          isHighContrast && styles.rootHighContrast,
+          isDetailedSymbols && styles.rootSymbols,
+          { paddingTop: insets.top },
+        ]}
+      >
         {/* Progress bar */}
         <View style={styles.progressTrack}>
           <Animated.View style={[styles.progressFill, { width: progressWidth }]} />
@@ -318,14 +521,22 @@ export default function ReaderScreen() {
         {/* Top bar */}
         <View style={styles.topBar}>
           <AnimatedPressable onPress={handleBack} style={styles.backBtn} scaleValue={0.9}>
-            <ArrowLeft size={22} color={WT.textSecondary} />
+            <ArrowLeft
+              size={22}
+              color={isLightMode ? stylesColors.lightSecondary : isDetailedSymbols ? stylesColors.symbolsSecondary : WT.textSecondary}
+            />
           </AnimatedPressable>
-          <Text style={styles.counterText}>{counterText}</Text>
+          <Text style={[styles.counterText, isLightMode && styles.counterTextLight, isDetailedSymbols && styles.counterTextSymbols]}>
+            {counterText}
+          </Text>
           <AnimatedPressable onPress={handleToggleVoiceNext} style={styles.autoBtn} scaleValue={0.9}>
             {voiceNextEnabled ? (
               <Mic size={20} color={listeningForVoice ? WT.green : WT.blue} />
             ) : (
-              <MicOff size={20} color={WT.textSecondary} />
+              <MicOff
+                size={20}
+                color={isLightMode ? stylesColors.lightSecondary : isDetailedSymbols ? stylesColors.symbolsSecondary : WT.textSecondary}
+              />
             )}
           </AnimatedPressable>
         </View>
@@ -337,34 +548,52 @@ export default function ReaderScreen() {
             { opacity: contentOpacity, transform: [{ translateY: contentTranslate }] },
           ]}
         >
-          <View style={[styles.modeBadge, isHighContrast && styles.modeBadgeHighContrast]}>
-            <Text style={[styles.modeBadgeText, isHighContrast && styles.modeBadgeTextHighContrast]}>
+          <View style={[styles.modeBadge, isLightMode && styles.modeBadgeLight, isHighContrast && styles.modeBadgeHighContrast, isDetailedSymbols && styles.modeBadgeSymbols]}>
+            <Text style={[styles.modeBadgeText, isLightMode && styles.modeBadgeTextLight, isHighContrast && styles.modeBadgeTextHighContrast, isDetailedSymbols && styles.modeBadgeTextSymbols]}>
               {uiPrefs.layoutPreset.toUpperCase()} • {uiPrefs.visualMode === 'normalLight' ? 'NORMAL LIGHT' : uiPrefs.visualMode === 'highContrast' ? 'HIGH CONTRAST' : 'DETAILED SYMBOLS'}
             </Text>
           </View>
           {step.wireLabel && (
-            <Text style={[styles.wireLabel, isHighContrast && styles.textHighContrast]}>{step.wireLabel}</Text>
+            <Text
+              style={[
+                styles.wireLabel,
+                isLightMode && styles.wireLabelLight,
+                isHighContrast && styles.textHighContrast,
+                isDetailedSymbols && styles.wireLabelSymbols,
+                stepWireColor ? { color: stepWireColor } : null,
+              ]}
+            >
+              {step.wireLabel}
+            </Text>
           )}
-          <Text style={[styles.instruction, isHighContrast && styles.instructionHighContrast]}>{step.instruction}</Text>
+          <Text style={[styles.instruction, isLightMode && styles.instructionLight, isHighContrast && styles.instructionHighContrast, isDetailedSymbols && styles.instructionSymbols]}>
+            {step.instruction}
+          </Text>
           {step.componentLabel && !isResidentialLayout && (
-            <View style={styles.componentBadge}>
-              <Text style={styles.componentBadgeText}>{step.componentLabel}</Text>
+            <View style={[styles.componentBadge, isLightMode && styles.componentBadgeLight, isDetailedSymbols && styles.componentBadgeSymbols]}>
+              <Text style={[styles.componentBadgeText, isLightMode && styles.componentBadgeTextLight, isDetailedSymbols && styles.componentBadgeTextSymbols]}>
+                {step.componentLabel}
+              </Text>
             </View>
           )}
           {(step.detail && !isResidentialLayout) && (
-            <Text style={styles.detail}>{step.detail}</Text>
+            <Text style={[styles.detail, isLightMode && styles.detailLight, isDetailedSymbols && styles.detailSymbols]}>{step.detail}</Text>
           )}
           {step.specialInstruction && (isCommercialLayout || isDetailedSymbols) && (
-            <View style={styles.specialBox}>
-              <Text style={styles.specialLabel}>Special Instruction</Text>
-              <Text style={styles.specialText}>{step.specialInstruction}</Text>
+            <View style={[styles.specialBox, isLightMode && styles.specialBoxLight, isDetailedSymbols && styles.specialBoxSymbols]}>
+              <Text style={[styles.specialLabel, isDetailedSymbols && styles.specialLabelSymbols]}>
+                {speechLanguage === 'spanish' ? 'Instrucción especial' : 'Special Instruction'}
+              </Text>
+              <Text style={[styles.specialText, isLightMode && styles.specialTextLight, isDetailedSymbols && styles.specialTextSymbols]}>
+                {step.specialInstruction}
+              </Text>
             </View>
           )}
-          <View style={styles.voiceStatusBox}>
-            <Text style={styles.voiceStatusLabel}>
+          <View style={[styles.voiceStatusBox, isLightMode && styles.voiceStatusBoxLight, isDetailedSymbols && styles.voiceStatusBoxSymbols]}>
+            <Text style={[styles.voiceStatusLabel, isDetailedSymbols && styles.voiceStatusLabelSymbols]}>
               {voiceNextEnabled ? (listeningForVoice ? 'VOICE READY' : 'VOICE WAIT') : 'VOICE OFF'}
             </Text>
-            <Text style={styles.voiceStatusText}>{voiceStatus}</Text>
+            <Text style={[styles.voiceStatusText, isLightMode && styles.voiceStatusTextLight, isDetailedSymbols && styles.voiceStatusTextSymbols]}>{voiceStatus}</Text>
             {voiceError ? <Text style={styles.voiceErrorText}>{voiceError}</Text> : null}
           </View>
         </Animated.View>
@@ -381,7 +610,7 @@ export default function ReaderScreen() {
               >
                 <ChevronLeft size={20} color={currentIndex === 0 ? WT.textTertiary : WT.textSecondary} />
                 <Text style={[styles.prevBtnText, currentIndex === 0 && { color: WT.textTertiary }]}>
-                  Previous
+                  {speechLanguage === 'spanish' ? 'Anterior' : 'Previous'}
                 </Text>
               </AnimatedPressable>
             ) : (
@@ -401,7 +630,21 @@ export default function ReaderScreen() {
 
           <AnimatedPressable onPress={handleNext} style={styles.nextBtn} scaleValue={0.97}>
             <Text style={styles.nextBtnText}>
-              {currentIndex >= steps.length - 1 ? 'FINISH' : isResidentialLayout ? 'NEXT' : isCommercialLayout ? 'NEXT CHECKPOINT' : 'NEXT STEP'}
+              {currentIndex >= steps.length - 1
+                ? speechLanguage === 'spanish'
+                  ? 'FINALIZAR'
+                  : 'FINISH'
+                : isResidentialLayout
+                ? speechLanguage === 'spanish'
+                  ? 'SIGUIENTE'
+                  : 'NEXT'
+                : isCommercialLayout
+                ? speechLanguage === 'spanish'
+                  ? 'SIGUIENTE PUNTO'
+                  : 'NEXT CHECKPOINT'
+                : speechLanguage === 'spanish'
+                ? 'SIGUIENTE PASO'
+                : 'NEXT STEP'}
             </Text>
           </AnimatedPressable>
         </View>
@@ -410,13 +653,24 @@ export default function ReaderScreen() {
   );
 }
 
+const stylesColors = {
+  lightSecondary: '#4B5563',
+  symbolsSecondary: '#80EEFF',
+} as const;
+
 const styles = StyleSheet.create({
   root: {
     flex: 1,
     backgroundColor: WT.bg,
   },
+  rootLight: {
+    backgroundColor: '#F4F7FB',
+  },
   rootHighContrast: {
     backgroundColor: '#000000',
+  },
+  rootSymbols: {
+    backgroundColor: '#061A22',
   },
   centered: {
     alignItems: 'center',
@@ -454,6 +708,12 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     color: WT.textSecondary,
   },
+  counterTextLight: {
+    color: '#4B5563',
+  },
+  counterTextSymbols: {
+    color: '#80EEFF',
+  },
   autoBtn: {
     width: 44,
     height: 44,
@@ -475,9 +735,17 @@ const styles = StyleSheet.create({
     paddingHorizontal: 10,
     paddingVertical: 5,
   },
+  modeBadgeLight: {
+    backgroundColor: '#E8EEF6',
+    borderColor: '#D3DCE8',
+  },
   modeBadgeHighContrast: {
     borderColor: WT.yellow,
     backgroundColor: 'rgba(255,214,10,0.18)',
+  },
+  modeBadgeSymbols: {
+    borderColor: '#00E5FF',
+    backgroundColor: 'rgba(0,229,255,0.18)',
   },
   modeBadgeText: {
     fontSize: 10,
@@ -488,11 +756,25 @@ const styles = StyleSheet.create({
   modeBadgeTextHighContrast: {
     color: WT.yellow,
   },
+  modeBadgeTextLight: {
+    color: '#334155',
+  },
+  modeBadgeTextSymbols: {
+    color: '#80EEFF',
+  },
   wireLabel: {
     fontSize: 32,
     fontWeight: '800',
     color: WT.blue,
     letterSpacing: -0.5,
+  },
+  wireLabelLight: {
+    color: '#0B66B8',
+  },
+  wireLabelSymbols: {
+    color: '#00E5FF',
+    textShadowColor: 'rgba(0, 229, 255, 0.35)',
+    textShadowRadius: 4,
   },
   textHighContrast: {
     color: WT.yellow,
@@ -503,11 +785,21 @@ const styles = StyleSheet.create({
     color: WT.textPrimary,
     lineHeight: 32,
   },
+  instructionLight: {
+    color: '#0F172A',
+    fontWeight: '600',
+  },
   instructionHighContrast: {
     fontSize: 24,
     lineHeight: 34,
     fontWeight: '700',
     color: '#FFFFFF',
+  },
+  instructionSymbols: {
+    color: '#D6F8FF',
+    fontWeight: '700',
+    fontSize: 24,
+    lineHeight: 34,
   },
   componentBadge: {
     alignSelf: 'flex-start',
@@ -518,15 +810,35 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: 'rgba(255,214,10,0.25)',
   },
+  componentBadgeLight: {
+    backgroundColor: 'rgba(11,102,184,0.1)',
+    borderColor: 'rgba(11,102,184,0.24)',
+  },
+  componentBadgeSymbols: {
+    backgroundColor: 'rgba(0,229,255,0.14)',
+    borderColor: 'rgba(0,229,255,0.35)',
+  },
   componentBadgeText: {
     fontSize: 15,
     fontWeight: '700',
     color: WT.yellow,
   },
+  componentBadgeTextLight: {
+    color: '#0B66B8',
+  },
+  componentBadgeTextSymbols: {
+    color: '#00E5FF',
+  },
   detail: {
     fontSize: 15,
     color: WT.textSecondary,
     lineHeight: 22,
+  },
+  detailLight: {
+    color: '#334155',
+  },
+  detailSymbols: {
+    color: '#A3EDFF',
   },
   specialBox: {
     backgroundColor: WT.bgCard,
@@ -535,6 +847,14 @@ const styles = StyleSheet.create({
     borderLeftWidth: 3,
     borderLeftColor: WT.blue,
     gap: 4,
+  },
+  specialBoxLight: {
+    backgroundColor: '#EAF3FF',
+    borderLeftColor: '#0B66B8',
+  },
+  specialBoxSymbols: {
+    backgroundColor: '#0D2A35',
+    borderLeftColor: '#00E5FF',
   },
   specialLabel: {
     fontSize: 11,
@@ -549,6 +869,15 @@ const styles = StyleSheet.create({
     fontStyle: 'italic',
     lineHeight: 20,
   },
+  specialLabelSymbols: {
+    color: '#00E5FF',
+  },
+  specialTextLight: {
+    color: '#334155',
+  },
+  specialTextSymbols: {
+    color: '#C3F6FF',
+  },
   voiceStatusBox: {
     backgroundColor: WT.bgCard,
     borderRadius: 12,
@@ -557,6 +886,14 @@ const styles = StyleSheet.create({
     borderColor: WT.border,
     gap: 4,
   },
+  voiceStatusBoxLight: {
+    backgroundColor: '#EAF1FA',
+    borderColor: '#D3DCE8',
+  },
+  voiceStatusBoxSymbols: {
+    backgroundColor: '#0E2A35',
+    borderColor: '#00E5FF',
+  },
   voiceStatusLabel: {
     fontSize: 11,
     fontWeight: '700',
@@ -564,10 +901,19 @@ const styles = StyleSheet.create({
     textTransform: 'uppercase',
     letterSpacing: 0.8,
   },
+  voiceStatusLabelSymbols: {
+    color: '#00E5FF',
+  },
   voiceStatusText: {
     fontSize: 13,
     color: WT.textSecondary,
     lineHeight: 19,
+  },
+  voiceStatusTextLight: {
+    color: '#334155',
+  },
+  voiceStatusTextSymbols: {
+    color: '#B7F4FF',
   },
   voiceErrorText: {
     fontSize: 12,

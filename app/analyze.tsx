@@ -11,7 +11,7 @@ import {
   View,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { router, useLocalSearchParams } from 'expo-router';
+import { router, useFocusEffect, useLocalSearchParams } from 'expo-router';
 import * as FileSystem from 'expo-file-system/legacy';
 import {
   AlertTriangle,
@@ -84,7 +84,7 @@ function SkeletonLine({ width, height = 14 }: { width: number | string; height?:
         Animated.timing(opacity, { toValue: 0.3, duration: 800, useNativeDriver: true }),
       ])
     ).start();
-  }, []);
+  }, [opacity]);
   return (
     <Animated.View
       style={[
@@ -150,11 +150,23 @@ export default function AnalyzeScreen() {
     if (loading) pulse.start();
     else pulse.stop();
     return () => pulse.stop();
-  }, [loading]);
+  }, [loading, pulseAnim]);
 
-  useEffect(() => {
-    loadUIPreferences().then(setUiPrefs);
-  }, []);
+  useFocusEffect(
+    useCallback(() => {
+      let isMounted = true;
+      loadUIPreferences()
+        .then((prefs) => {
+          if (isMounted) setUiPrefs(prefs);
+        })
+        .catch((error) => {
+          console.error('[Analyze] Failed to refresh UI preferences', error);
+        });
+      return () => {
+        isMounted = false;
+      };
+    }, [])
+  );
 
   const runAnalysis = useCallback(async (imageUri: string) => {
     setLoading(true);
@@ -254,7 +266,7 @@ export default function AnalyzeScreen() {
     } else if (params.imageUri) {
       runAnalysis(params.imageUri);
     }
-  }, []);
+  }, [params.imageUri, params.imageUris, params.schematicId, runAnalysis, runMultiAnalysis]);
 
   const handleStartReading = async () => {
     if (!schematic) return;
@@ -391,6 +403,14 @@ export default function AnalyzeScreen() {
   const isHighContrast = uiPrefs.visualMode === 'highContrast';
   const isDetailedSymbols = uiPrefs.visualMode === 'detailedSymbols';
   const isLightMode = uiPrefs.visualMode === 'normalLight';
+  const activeVisionProviderLabel =
+    uiPrefs.visionProvider === 'openrouter'
+      ? 'OpenRouter'
+      : uiPrefs.visionProvider === 'openai'
+      ? 'OpenAI'
+      : uiPrefs.visionProvider === 'groq'
+      ? 'Groq'
+      : 'Auto (OpenRouter → OpenAI → Groq)';
   const wireDisplayLimit = uiPrefs.layoutPreset === 'residential' ? 5 : uiPrefs.layoutPreset === 'commercial' ? 10 : 8;
   const connectionDisplayLimit = uiPrefs.layoutPreset === 'residential' ? 4 : uiPrefs.layoutPreset === 'commercial' ? 8 : 6;
 
@@ -416,7 +436,7 @@ export default function AnalyzeScreen() {
   };
 
   return (
-    <View style={[styles.root, { paddingTop: insets.top }]}>
+    <View style={[styles.root, isLightMode && styles.rootLight, isDetailedSymbols && styles.rootSymbols, { paddingTop: insets.top }]}>
       {/* Header */}
       <View style={styles.header}>
         <AnimatedPressable onPress={() => {
@@ -425,7 +445,7 @@ export default function AnalyzeScreen() {
         }} style={styles.backBtn} scaleValue={0.9}>
           <ArrowLeft size={22} color={WT.blue} />
         </AnimatedPressable>
-        <Text style={styles.headerTitle}>Analyze Schematic</Text>
+        <Text style={[styles.headerTitle, isLightMode && styles.headerTitleLight, isDetailedSymbols && styles.headerTitleSymbols]}>Analyze Schematic</Text>
         <View style={{ width: 44 }} />
       </View>
 
@@ -453,6 +473,7 @@ export default function AnalyzeScreen() {
             </Animated.View>
             <Text style={styles.loadingTitle}>Analyzing schematic...</Text>
             <Text style={styles.loadingSubtitle}>AI is extracting wires, components, and connections</Text>
+            <Text style={styles.loadingProviderText}>Active AI Provider: {activeVisionProviderLabel}</Text>
             <View style={{ gap: 12, marginTop: 8 }}>
               <SkeletonCard />
               <SkeletonCard />
@@ -485,7 +506,7 @@ export default function AnalyzeScreen() {
         {/* Results */}
         {schematic && !loading && (
           <>
-            <View style={[styles.prefBanner, isHighContrast && styles.prefBannerHighContrast]}>
+            <View style={[styles.prefBanner, isHighContrast && styles.prefBannerHighContrast, isDetailedSymbols && styles.prefBannerSymbols]}>
               <Text style={[styles.prefBannerText, isLightMode && styles.prefBannerTextDark]}>
                 Visual: {uiPrefs.visualMode === 'normalLight' ? 'Normal Light' : uiPrefs.visualMode === 'highContrast' ? 'High Contrast' : 'Detailed Symbols'}
                 {' • '}
@@ -577,10 +598,10 @@ export default function AnalyzeScreen() {
             </View>
 
             {/* Wire Summary */}
-            <View style={[styles.card, isHighContrast && styles.highContrastCard]}>
+            <View style={[styles.card, isHighContrast && styles.highContrastCard, isDetailedSymbols && styles.symbolsCard]}>
               <View style={styles.cardHeader}>
                 <Zap size={16} color={WT.blue} />
-                <Text style={styles.cardTitle}>Wire Summary</Text>
+                <Text style={[styles.cardTitle, isDetailedSymbols && styles.symbolsPrimaryText]}>Wire Summary</Text>
                 <View style={styles.countBadge}>
                   <Text style={styles.countBadgeText}>{schematic.wireCount}</Text>
                 </View>
@@ -596,8 +617,16 @@ export default function AnalyzeScreen() {
                     scaleValue={0.99}
                   >
                     <View style={[styles.wireColorDot, { backgroundColor: wireColor(wire.color) }]} />
-                    <Text style={styles.wireLabel}>{wire.label}</Text>
-                    <Text style={styles.wireRoute} numberOfLines={1}>
+                    <Text
+                      style={[
+                        styles.wireLabel,
+                        isDetailedSymbols && styles.symbolsPrimaryText,
+                        wire.color ? { color: wireColor(wire.color) } : null,
+                      ]}
+                    >
+                      {wire.label}
+                    </Text>
+                    <Text style={[styles.wireRoute, isDetailedSymbols && styles.symbolsSecondaryText]} numberOfLines={1}>
                       {wire.fromPoint}
                       {' → '}
                       {wire.toPoint}
@@ -621,10 +650,10 @@ export default function AnalyzeScreen() {
             </View>
 
             {/* Components */}
-            <View style={[styles.card, isHighContrast && styles.highContrastCard]}>
+            <View style={[styles.card, isHighContrast && styles.highContrastCard, isDetailedSymbols && styles.symbolsCard]}>
               <View style={styles.cardHeader}>
                 <Cpu size={16} color={WT.blue} />
-                <Text style={styles.cardTitle}>Components Found</Text>
+                <Text style={[styles.cardTitle, isDetailedSymbols && styles.symbolsPrimaryText]}>Components Found</Text>
                 <View style={styles.countBadge}>
                   <Text style={styles.countBadgeText}>{schematic.componentCount}</Text>
                 </View>
@@ -640,7 +669,7 @@ export default function AnalyzeScreen() {
                     scaleValue={0.99}
                   >
                     <View style={styles.componentLeft}>
-                      <Text style={styles.componentLabel}>{comp.label}</Text>
+                      <Text style={[styles.componentLabel, isDetailedSymbols && styles.symbolsPrimaryText]}>{comp.label}</Text>
                       <View style={[styles.typeBadge, comp.isUnknown && styles.typeBadgeUnknown]}>
                         <Text style={[styles.typeBadgeText, comp.isUnknown && styles.typeBadgeTextUnknown]}>
                           {comp.userIdentifiedAs || comp.type}
@@ -648,7 +677,7 @@ export default function AnalyzeScreen() {
                       </View>
                       <ConfBadge confidence={comp.confidence} />
                     </View>
-                    <Text style={styles.componentDesc} numberOfLines={isDetailedSymbols ? 4 : 2}>
+                    <Text style={[styles.componentDesc, isDetailedSymbols && styles.symbolsSecondaryText]} numberOfLines={isDetailedSymbols ? 4 : 2}>
                       {comp.description}
                     </Text>
                   </AnimatedPressable>
@@ -658,10 +687,10 @@ export default function AnalyzeScreen() {
 
             {/* Unknown Symbols */}
             {schematic.unknownSymbols.length > 0 && (
-              <View style={[styles.card, isHighContrast && styles.highContrastCard]}>
+              <View style={[styles.card, isHighContrast && styles.highContrastCard, isDetailedSymbols && styles.symbolsCard]}>
                 <View style={styles.cardHeader}>
                   <AlertTriangle size={16} color={WT.yellow} />
-                  <Text style={styles.cardTitle}>Unknown Symbols</Text>
+                  <Text style={[styles.cardTitle, isDetailedSymbols && styles.symbolsPrimaryText]}>Unknown Symbols</Text>
                   <View style={[styles.countBadge, styles.countBadgeWarning]}>
                     <Text style={[styles.countBadgeText, styles.countBadgeTextWarning]}>
                       {schematic.unknownSymbols.length}
@@ -676,7 +705,7 @@ export default function AnalyzeScreen() {
                     scaleValue={0.99}
                   >
                     <View style={{ flex: 1 }}>
-                      <Text style={styles.unknownDesc}>{sym.description}</Text>
+                      <Text style={[styles.unknownDesc, isDetailedSymbols && styles.symbolsSecondaryText]}>{sym.description}</Text>
                       {sym.userIdentifiedAs && (
                         <View style={styles.identifiedBadge}>
                           <CheckCircle size={12} color={WT.green} />
@@ -698,12 +727,12 @@ export default function AnalyzeScreen() {
             )}
 
             {/* Connections */}
-            <View style={[styles.card, isHighContrast && styles.highContrastCard]}>
+            <View style={[styles.card, isHighContrast && styles.highContrastCard, isDetailedSymbols && styles.symbolsCard]}>
               <View style={styles.cardHeader}>
                 <View style={styles.connectionIcon}>
                   <Text style={styles.connectionIconText}>⟶</Text>
                 </View>
-                <Text style={styles.cardTitle}>Point-to-Point Connections</Text>
+                <Text style={[styles.cardTitle, isDetailedSymbols && styles.symbolsPrimaryText]}>Point-to-Point Connections</Text>
                 <View style={styles.countBadge}>
                   <Text style={styles.countBadgeText}>{schematic.connections.length}</Text>
                 </View>
@@ -718,8 +747,8 @@ export default function AnalyzeScreen() {
                     style={[styles.connectionRow, highlightKey === `connection:${conn.id}` && styles.highlightedRow]}
                     scaleValue={0.99}
                   >
-                    <Text style={styles.connectionWire}>{conn.wireLabel}</Text>
-                    <Text style={styles.connectionDesc} numberOfLines={2}>
+                    <Text style={[styles.connectionWire, isDetailedSymbols && styles.symbolsPrimaryText]}>{conn.wireLabel}</Text>
+                    <Text style={[styles.connectionDesc, isDetailedSymbols && styles.symbolsSecondaryText]} numberOfLines={2}>
                       {conn.description}
                     </Text>
                   </AnimatedPressable>
@@ -874,6 +903,12 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: WT.bg,
   },
+  rootLight: {
+    backgroundColor: '#F4F7FB',
+  },
+  rootSymbols: {
+    backgroundColor: '#061A22',
+  },
   header: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -893,6 +928,12 @@ const styles = StyleSheet.create({
     fontSize: 17,
     fontWeight: '600',
     color: WT.textPrimary,
+  },
+  headerTitleLight: {
+    color: '#0F172A',
+  },
+  headerTitleSymbols: {
+    color: '#D6F8FF',
   },
   scroll: {
     flex: 1,
@@ -935,6 +976,11 @@ const styles = StyleSheet.create({
     fontSize: 13,
     color: WT.textSecondary,
     textAlign: 'center',
+  },
+  loadingProviderText: {
+    fontSize: 12,
+    color: WT.blue,
+    fontWeight: '600',
   },
   errorCard: {
     flexDirection: 'row',
@@ -998,6 +1044,10 @@ const styles = StyleSheet.create({
     borderColor: WT.yellow,
     backgroundColor: 'rgba(255,214,10,0.16)',
   },
+  prefBannerSymbols: {
+    borderColor: '#00E5FF',
+    backgroundColor: 'rgba(0,229,255,0.16)',
+  },
   prefBannerText: {
     fontSize: 12,
     fontWeight: '600',
@@ -1029,6 +1079,10 @@ const styles = StyleSheet.create({
   highContrastCard: {
     borderWidth: 2,
     borderColor: WT.yellow,
+  },
+  symbolsCard: {
+    borderColor: 'rgba(0,229,255,0.3)',
+    backgroundColor: '#0D2530',
   },
   aiHelperText: {
     fontSize: 12,
@@ -1130,6 +1184,12 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     color: WT.textPrimary,
     flex: 1,
+  },
+  symbolsPrimaryText: {
+    color: '#D6F8FF',
+  },
+  symbolsSecondaryText: {
+    color: '#9AEFFF',
   },
   countBadge: {
     backgroundColor: WT.blueMuted,

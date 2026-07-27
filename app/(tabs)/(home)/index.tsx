@@ -3,6 +3,7 @@ import {
   Animated,
   FlatList,
   Image,
+  ImageBackground,
   ImageSourcePropType,
   Pressable,
   StyleSheet,
@@ -14,6 +15,9 @@ import { router, useFocusEffect } from 'expo-router';
 import { BookOpen, Camera, CircuitBoard, Clock, Settings, Zap } from 'lucide-react-native';
 import { WT } from '@/constants/wiretrace';
 import { loadSchematics, SchematicAnalysis } from '@/utils/schematic-storage';
+import { AppLanguage, isSpanish, loadAppLanguage } from '@/utils/app-language';
+
+const HOME_BACKGROUND = require('../../../assets/images/home-background-gears.png');
 
 function resolveImageSource(source: string | number | ImageSourcePropType | undefined): ImageSourcePropType {
   if (!source) return { uri: '' };
@@ -46,7 +50,7 @@ function AnimatedPressable({
   );
 }
 
-function SchematicCard({ item, index }: { item: SchematicAnalysis; index: number }) {
+function SchematicCard({ item, index, language }: { item: SchematicAnalysis; index: number; language: AppLanguage }) {
   const opacity = useRef(new Animated.Value(0)).current;
   const translateY = useRef(new Animated.Value(16)).current;
 
@@ -55,9 +59,9 @@ function SchematicCard({ item, index }: { item: SchematicAnalysis; index: number
       Animated.timing(opacity, { toValue: 1, duration: 350, delay: index * 70, useNativeDriver: true }),
       Animated.timing(translateY, { toValue: 0, duration: 350, delay: index * 70, useNativeDriver: true }),
     ]).start();
-  }, []);
+  }, [index, opacity, translateY]);
 
-  const dateDisplay = new Date(item.analyzedAt).toLocaleDateString('en-US', {
+  const dateDisplay = new Date(item.analyzedAt).toLocaleDateString(language === 'spanish' ? 'es-ES' : 'en-US', {
     month: 'short',
     day: 'numeric',
     hour: 'numeric',
@@ -93,7 +97,7 @@ function SchematicCard({ item, index }: { item: SchematicAnalysis; index: number
                 {item.wireCount}
               </Text>
               <Text style={styles.metaBadgeLabel}>
-                {' wires'}
+                {es ? ' cables' : ' wires'}
               </Text>
             </View>
             <View style={styles.metaDot} />
@@ -102,7 +106,7 @@ function SchematicCard({ item, index }: { item: SchematicAnalysis; index: number
                 {item.componentCount}
               </Text>
               <Text style={styles.metaBadgeLabel}>
-                {' parts'}
+                {es ? ' partes' : ' parts'}
               </Text>
             </View>
           </View>
@@ -124,12 +128,14 @@ function SchematicCard({ item, index }: { item: SchematicAnalysis; index: number
 export default function HomeScreen() {
   const insets = useSafeAreaInsets();
   const [schematics, setSchematics] = useState<SchematicAnalysis[]>([]);
+  const [language, setLanguage] = useState<AppLanguage>('english');
   const scanScale = useRef(new Animated.Value(1)).current;
 
   useFocusEffect(
     useCallback(() => {
       console.log('[Home] Screen focused — loading schematics');
       loadSchematics().then(setSchematics).catch(console.error);
+      loadAppLanguage().then(setLanguage).catch(console.error);
     }, [])
   );
 
@@ -143,7 +149,7 @@ export default function HomeScreen() {
     );
     pulse.start();
     return () => pulse.stop();
-  }, []);
+  }, [scanScale]);
 
   const handleScan = () => {
     console.log('[Home] Tapped Scan Schematic button');
@@ -161,76 +167,81 @@ export default function HomeScreen() {
   };
 
   const topPad = insets.top + 16;
+  const es = isSpanish(language);
 
   return (
     <View style={styles.root}>
-      {/* Header */}
-      <View style={[styles.header, { paddingTop: topPad }]}>
-        <View style={styles.headerLeft}>
-          <Zap size={22} color={WT.blue} fill={WT.blue} />
-          <Text style={styles.headerTitle}>WireTrace AI</Text>
-        </View>
-        <AnimatedPressable onPress={handleSettings} style={styles.settingsBtn} scaleValue={0.9}>
-          <Settings size={22} color={WT.textSecondary} />
-        </AnimatedPressable>
-      </View>
-
-      <FlatList
-        data={schematics}
-        keyExtractor={(item) => item.id}
-        contentContainerStyle={[styles.listContent, { paddingBottom: insets.bottom + 32 }]}
-        ListHeaderComponent={
-          <>
-            {/* Hero section */}
-            <View style={styles.heroSection}>
-              <Animated.View style={{ transform: [{ scale: scanScale }] }}>
-                <AnimatedPressable onPress={handleScan} style={styles.scanButton} scaleValue={0.96}>
-                  <View style={styles.scanButtonInner}>
-                    <Camera size={32} color="#FFFFFF" strokeWidth={2} />
-                    <Text style={styles.scanButtonText}>Scan Schematic</Text>
-                    <Text style={styles.scanButtonSub}>Point camera at a wire diagram</Text>
-                  </View>
-                </AnimatedPressable>
-              </Animated.View>
-
-              {/* Symbol Dictionary quick-access */}
-              <AnimatedPressable onPress={handleDictionary} style={styles.dictBtn} scaleValue={0.97}>
-                <BookOpen size={18} color={WT.blue} />
-                <Text style={styles.dictBtnText}>Symbol Dictionary</Text>
-                <Text style={styles.dictBtnSub}>Reference guide for all standard symbols</Text>
-              </AnimatedPressable>
+      <ImageBackground source={HOME_BACKGROUND} style={styles.background} imageStyle={styles.backgroundImage}>
+        <View style={styles.backgroundOverlay}>
+          {/* Header */}
+          <View style={[styles.header, { paddingTop: topPad }]}>
+            <View style={styles.headerLeft}>
+              <Zap size={22} color={WT.blue} fill={WT.blue} />
+              <Text style={styles.headerTitle}>WireTrace AI</Text>
             </View>
+            <AnimatedPressable onPress={handleSettings} style={styles.settingsBtn} scaleValue={0.9}>
+              <Settings size={22} color={WT.textSecondary} />
+            </AnimatedPressable>
+          </View>
 
-            {/* Section header */}
-            {schematics.length > 0 && (
-              <View style={styles.sectionHeader}>
-                <Text style={styles.sectionTitle}>Recent Schematics</Text>
-                <Text style={styles.sectionCount}>
-                  {schematics.length}
+          <FlatList
+            data={schematics}
+            keyExtractor={(item) => item.id}
+            contentContainerStyle={[styles.listContent, { paddingBottom: insets.bottom + 32 }]}
+            ListHeaderComponent={
+              <>
+                {/* Hero section */}
+                <View style={styles.heroSection}>
+                  <Animated.View style={{ transform: [{ scale: scanScale }] }}>
+                    <AnimatedPressable onPress={handleScan} style={styles.scanButton} scaleValue={0.96}>
+                      <View style={styles.scanButtonInner}>
+                        <Camera size={32} color="#FFFFFF" strokeWidth={2} />
+                        <Text style={styles.scanButtonText}>{es ? 'Escanear Esquema' : 'Scan Schematic'}</Text>
+                        <Text style={styles.scanButtonSub}>{es ? 'Apunta la cámara al diagrama de cableado' : 'Point camera at a wire diagram'}</Text>
+                      </View>
+                    </AnimatedPressable>
+                  </Animated.View>
+
+                  {/* Symbol Dictionary quick-access */}
+                  <AnimatedPressable onPress={handleDictionary} style={styles.dictBtn} scaleValue={0.97}>
+                    <BookOpen size={18} color={WT.blue} />
+                    <Text style={styles.dictBtnText}>{es ? 'Diccionario de Símbolos' : 'Symbol Dictionary'}</Text>
+                    <Text style={styles.dictBtnSub}>{es ? 'Guía de referencia para símbolos estándar' : 'Reference guide for all standard symbols'}</Text>
+                  </AnimatedPressable>
+                </View>
+
+                {/* Section header */}
+                {schematics.length > 0 && (
+                  <View style={styles.sectionHeader}>
+                    <Text style={styles.sectionTitle}>{es ? 'Esquemas Recientes' : 'Recent Schematics'}</Text>
+                    <Text style={styles.sectionCount}>
+                      {schematics.length}
+                    </Text>
+                  </View>
+                )}
+              </>
+            }
+            ListEmptyComponent={
+              <View style={styles.emptyState}>
+                <View style={styles.emptyIcon}>
+                  <CircuitBoard size={36} color={WT.blue} />
+                </View>
+                <Text style={styles.emptyTitle}>{es ? 'Aún no hay esquemas' : 'No schematics yet'}</Text>
+                <Text style={styles.emptySubtitle}>
+                  {es ? 'Toca Escanear para fotografiar un diagrama y comenzar' : 'Tap Scan to photograph a wire diagram and get started'}
                 </Text>
               </View>
-            )}
-          </>
-        }
-        ListEmptyComponent={
-          <View style={styles.emptyState}>
-            <View style={styles.emptyIcon}>
-              <CircuitBoard size={36} color={WT.blue} />
-            </View>
-            <Text style={styles.emptyTitle}>No schematics yet</Text>
-            <Text style={styles.emptySubtitle}>
-              Tap Scan to photograph a wire diagram and get started
-            </Text>
-          </View>
-        }
-        renderItem={({ item, index }) => <SchematicCard item={item} index={index} />}
-        ItemSeparatorComponent={() => <View style={styles.separator} />}
-      />
+            }
+            renderItem={({ item, index }) => <SchematicCard item={item} index={index} language={language} />}
+            ItemSeparatorComponent={() => <View style={styles.separator} />}
+          />
 
-      {/* Footer */}
-      <View style={[styles.footer, { paddingBottom: insets.bottom + 8 }]}>
-        <Text style={styles.footerText}>Powered by AI Vision</Text>
-      </View>
+          {/* Footer */}
+          <View style={[styles.footer, { paddingBottom: insets.bottom + 8 }]}>
+            <Text style={styles.footerText}>{es ? 'Impulsado por Visión AI' : 'Powered by AI Vision'}</Text>
+          </View>
+        </View>
+      </ImageBackground>
     </View>
   );
 }
@@ -239,6 +250,17 @@ const styles = StyleSheet.create({
   root: {
     flex: 1,
     backgroundColor: WT.bg,
+  },
+  background: {
+    flex: 1,
+  },
+  backgroundImage: {
+    resizeMode: 'contain',
+    opacity: 0.16,
+  },
+  backgroundOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(10, 14, 22, 0.9)',
   },
   header: {
     flexDirection: 'row',
@@ -454,3 +476,4 @@ const styles = StyleSheet.create({
     letterSpacing: 0.3,
   },
 });
+  const es = isSpanish(language);

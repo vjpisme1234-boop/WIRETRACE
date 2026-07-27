@@ -9,12 +9,13 @@ import {
   View,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { router } from 'expo-router';
+import { router, useFocusEffect } from 'expo-router';
 import { CameraView, useCameraPermissions } from 'expo-camera';
 import * as ImagePicker from 'expo-image-picker';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import { Flashlight, FlashlightOff, Image as ImageIcon, Minus, Plus, X } from 'lucide-react-native';
 import { WT } from '@/constants/wiretrace';
+import { AppLanguage, isSpanish, loadAppLanguage } from '@/utils/app-language';
 
 function resolveImageSource(source: string | number | ImageSourcePropType | undefined): ImageSourcePropType {
   if (!source) return { uri: '' };
@@ -62,17 +63,26 @@ function zoomLabel(zoom: number): string {
 export default function CameraScreen() {
   const insets = useSafeAreaInsets();
   const [permission, requestPermission] = useCameraPermissions();
+  const [language, setLanguage] = useState<AppLanguage>('english');
 
   // A single captured URI pending preview decision
   const [previewUri, setPreviewUri] = useState<string | null>(null);
   // Accumulated pages for multi-page scanning
   const [pages, setPages] = useState<string[]>([]);
+  const [capturing, setCapturing] = useState(false);
 
   const [torch, setTorch] = useState(false);
   const [zoom, setZoom] = useState(0);
 
   const cameraRef = useRef<CameraView>(null);
   const pinchStartZoom = useRef(0);
+  const es = isSpanish(language);
+
+  useFocusEffect(
+    React.useCallback(() => {
+      loadAppLanguage().then(setLanguage).catch(console.error);
+    }, [])
+  );
 
   // -------------------------------------------------------------------------
   // Capture / gallery
@@ -80,15 +90,23 @@ export default function CameraScreen() {
 
   const handleCapture = async () => {
     console.log('[Camera] Shutter button pressed');
-    if (!cameraRef.current) return;
+    if (!cameraRef.current || capturing) return;
+    setCapturing(true);
     try {
-      const photo = await cameraRef.current.takePictureAsync({ quality: 0.9 });
+      const photo = await cameraRef.current.takePictureAsync({
+        quality: 0.85,
+        base64: false,
+        exif: false,
+        skipProcessing: true,
+      });
       if (photo?.uri) {
         console.log('[Camera] Photo captured', { uri: photo.uri });
         setPreviewUri(photo.uri);
       }
     } catch (e) {
       console.error('[Camera] Capture failed', e);
+    } finally {
+      setCapturing(false);
     }
   };
 
@@ -195,16 +213,18 @@ export default function CameraScreen() {
       <View style={[styles.root, styles.permissionContainer]}>
         <Text style={styles.permissionTitle}>Camera Access Required</Text>
         <Text style={styles.permissionSub}>
-          WireTrace AI needs camera access to photograph wire schematics.
+          {es
+            ? 'WireTrace AI necesita acceso a la cámara para fotografiar esquemas de cableado.'
+            : 'WireTrace AI needs camera access to photograph wire schematics.'}
         </Text>
         <AnimatedPressable onPress={() => {
           console.log('[Camera] Request permission pressed');
           requestPermission();
         }} style={styles.permissionBtn}>
-          <Text style={styles.permissionBtnText}>Grant Camera Access</Text>
+          <Text style={styles.permissionBtnText}>{es ? 'Permitir acceso a cámara' : 'Grant Camera Access'}</Text>
         </AnimatedPressable>
         <AnimatedPressable onPress={() => router.back()} style={styles.cancelTextBtn}>
-          <Text style={styles.cancelTextBtnText}>Cancel</Text>
+          <Text style={styles.cancelTextBtnText}>{es ? 'Cancelar' : 'Cancel'}</Text>
         </AnimatedPressable>
       </View>
     );
@@ -226,7 +246,9 @@ export default function CameraScreen() {
 
         {/* Page count badge */}
         <View style={[styles.pagesBadge, { top: insets.top + 16 }]}>
-          <Text style={styles.pagesBadgeText}>{pages.length} page{pages.length !== 1 ? 's' : ''} queued</Text>
+          <Text style={styles.pagesBadgeText}>
+            {pages.length} {es ? (pages.length !== 1 ? 'páginas en cola' : 'página en cola') : `page${pages.length !== 1 ? 's' : ''} queued`}
+          </Text>
         </View>
 
         <AnimatedPressable
@@ -238,18 +260,22 @@ export default function CameraScreen() {
         </AnimatedPressable>
 
         <View style={[styles.previewOverlay, { paddingBottom: insets.bottom + 32 }]}>
-          <Text style={styles.previewLabel}>{pages.length} page{pages.length !== 1 ? 's' : ''} ready</Text>
-          <Text style={styles.previewSub}>Add more pages or finish to analyze all at once</Text>
+          <Text style={styles.previewLabel}>
+            {pages.length} {es ? (pages.length !== 1 ? 'páginas listas' : 'página lista') : `page${pages.length !== 1 ? 's' : ''} ready`}
+          </Text>
+          <Text style={styles.previewSub}>
+            {es ? 'Agrega más páginas o finaliza para analizar todo junto' : 'Add more pages or finish to analyze all at once'}
+          </Text>
           <View style={styles.previewButtons}>
             <AnimatedPressable onPress={() => setPages([])} style={styles.retakeBtn}>
-              <Text style={styles.retakeBtnText}>Clear All</Text>
+              <Text style={styles.retakeBtnText}>{es ? 'Borrar todo' : 'Clear All'}</Text>
             </AnimatedPressable>
             <AnimatedPressable onPress={() => setPreviewUri(null)} style={styles.addPageBtn}>
-              <Text style={styles.addPageBtnText}>Add Page</Text>
+              <Text style={styles.addPageBtnText}>{es ? 'Agregar página' : 'Add Page'}</Text>
             </AnimatedPressable>
           </View>
           <AnimatedPressable onPress={handleFinishPages} style={styles.finishBtn} scaleValue={0.97}>
-            <Text style={styles.finishBtnText}>Analyze {pages.length} Pages →</Text>
+            <Text style={styles.finishBtnText}>{es ? `Analizar ${pages.length} páginas →` : `Analyze ${pages.length} Pages →`}</Text>
           </AnimatedPressable>
         </View>
       </View>
@@ -271,7 +297,7 @@ export default function CameraScreen() {
         />
         {pages.length > 0 && (
           <View style={[styles.pagesBadge, { top: insets.top + 16 }]}>
-            <Text style={styles.pagesBadgeText}>Page {totalPages} of scan</Text>
+            <Text style={styles.pagesBadgeText}>{es ? `Página ${totalPages} del escaneo` : `Page ${totalPages} of scan`}</Text>
           </View>
         )}
         <AnimatedPressable
@@ -283,22 +309,38 @@ export default function CameraScreen() {
         </AnimatedPressable>
         <View style={[styles.previewOverlay, { paddingBottom: insets.bottom + 32 }]}>
           <Text style={styles.previewLabel}>
-            {pages.length > 0 ? `Page ${totalPages} — looks good?` : 'Use this photo?'}
+            {pages.length > 0
+              ? es
+                ? `Página ${totalPages} — ¿se ve bien?`
+                : `Page ${totalPages} — looks good?`
+              : es
+              ? '¿Usar esta foto?'
+              : 'Use this photo?'}
           </Text>
           {pages.length === 0 && (
-            <Text style={styles.previewSub}>Tip: scan multiple pages to analyze an entire schematic book</Text>
+            <Text style={styles.previewSub}>
+              {es
+                ? 'Tip: escanea varias páginas para analizar un esquema completo'
+                : 'Tip: scan multiple pages to analyze an entire schematic book'}
+            </Text>
           )}
           <View style={styles.previewButtons}>
             <AnimatedPressable onPress={handleRetake} style={styles.retakeBtn}>
-              <Text style={styles.retakeBtnText}>Retake</Text>
+              <Text style={styles.retakeBtnText}>{es ? 'Repetir foto' : 'Retake'}</Text>
             </AnimatedPressable>
             <AnimatedPressable onPress={handleAddAnotherPage} style={styles.addPageBtn}>
-              <Text style={styles.addPageBtnText}>+ Add Page</Text>
+              <Text style={styles.addPageBtnText}>{es ? '+ Agregar página' : '+ Add Page'}</Text>
             </AnimatedPressable>
           </View>
           <AnimatedPressable onPress={handleUseCurrentPhoto} style={styles.finishBtn} scaleValue={0.97}>
             <Text style={styles.finishBtnText}>
-              {pages.length > 0 ? `Analyze All ${totalPages} Pages →` : 'Analyze Photo →'}
+              {pages.length > 0
+                ? es
+                  ? `Analizar las ${totalPages} páginas →`
+                  : `Analyze All ${totalPages} Pages →`
+                : es
+                ? 'Analizar foto →'
+                : 'Analyze Photo →'}
             </Text>
           </AnimatedPressable>
         </View>
@@ -330,13 +372,17 @@ export default function CameraScreen() {
           <View style={[styles.corner, styles.cornerBL]} />
           <View style={[styles.corner, styles.cornerBR]} />
         </View>
-        <Text style={styles.viewfinderHint}>Align schematic within frame • Ensure good lighting</Text>
+        <Text style={styles.viewfinderHint}>
+          {es ? 'Alinea el esquema dentro del marco • Usa buena iluminación' : 'Align schematic within frame • Ensure good lighting'}
+        </Text>
       </View>
 
       {/* Pages accumulated badge */}
       {pages.length > 0 && (
         <View style={[styles.pagesBadge, { top: insets.top + 16 }]}>
-          <Text style={styles.pagesBadgeText}>{pages.length} page{pages.length !== 1 ? 's' : ''} captured</Text>
+          <Text style={styles.pagesBadgeText}>
+            {pages.length} {es ? (pages.length !== 1 ? 'páginas capturadas' : 'página capturada') : `page${pages.length !== 1 ? 's' : ''} captured`}
+          </Text>
         </View>
       )}
 
@@ -357,7 +403,7 @@ export default function CameraScreen() {
           <X size={22} color="#FFFFFF" />
         </AnimatedPressable>
 
-        <Text style={styles.topBarTitle}>Scan Schematic</Text>
+        <Text style={styles.topBarTitle}>{es ? 'Escanear Esquema' : 'Scan Schematic'}</Text>
 
         {/* Torch toggle */}
         <AnimatedPressable
@@ -403,17 +449,17 @@ export default function CameraScreen() {
       <View style={[styles.bottomBar, { paddingBottom: insets.bottom + 24 }]}>
         <AnimatedPressable onPress={handleGallery} style={styles.sideBtn} scaleValue={0.9}>
           <ImageIcon size={26} color="#FFFFFF" />
-          <Text style={styles.sideBtnLabel}>Gallery</Text>
+          <Text style={styles.sideBtnLabel}>{es ? 'Galería' : 'Gallery'}</Text>
         </AnimatedPressable>
 
-        <AnimatedPressable onPress={handleCapture} style={styles.shutterOuter} scaleValue={0.93}>
+        <AnimatedPressable onPress={handleCapture} style={styles.shutterOuter} scaleValue={0.93} disabled={capturing}>
           <View style={styles.shutterInner} />
         </AnimatedPressable>
 
         {/* "Done" shortcut if pages accumulated */}
         {pages.length > 0 ? (
           <AnimatedPressable onPress={handleFinishPages} style={styles.doneSideBtn} scaleValue={0.9}>
-            <Text style={styles.doneSideBtnText}>Done</Text>
+            <Text style={styles.doneSideBtnText}>{es ? 'Listo' : 'Done'}</Text>
             <View style={styles.doneCountBadge}>
               <Text style={styles.doneCountText}>{pages.length}</Text>
             </View>

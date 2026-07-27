@@ -1,13 +1,31 @@
 import * as SecureStore from 'expo-secure-store';
-import { OPENROUTER_API_KEY, OPENROUTER_BASE_URL, OPENROUTER_MODEL, STORAGE_KEYS } from '@/constants/wiretrace';
+import { OPENROUTER_BASE_URL, OPENROUTER_MODEL, STORAGE_KEYS } from '@/constants/wiretrace';
 import type { ReadingStep } from '@/utils/schematic-storage';
+import { loadUIPreferences } from '@/utils/ui-preferences';
+
+const OPENAI_VISION_MODEL = process.env.EXPO_PUBLIC_OPENAI_MODEL || 'gpt-4o-mini';
+const GROQ_VISION_MODEL = process.env.EXPO_PUBLIC_GROQ_MODEL || 'llama-3.2-11b-vision-preview';
 
 async function getApiKey(): Promise<string> {
-  try {
-    const stored = await SecureStore.getItemAsync(STORAGE_KEYS.API_KEY);
-    return stored || OPENROUTER_API_KEY;
-  } catch {
-    return OPENROUTER_API_KEY;
+  const stored = await SecureStore.getItemAsync(STORAGE_KEYS.API_KEY);
+  return stored ? stored.trim() : '';
+}
+
+async function getOpenAIKey(): Promise<string> {
+  const stored = await SecureStore.getItemAsync(STORAGE_KEYS.OPENAI_API_KEY);
+  return stored ? stored.trim() : '';
+}
+
+async function getGroqKey(): Promise<string> {
+  const stored = await SecureStore.getItemAsync(STORAGE_KEYS.GROQ_API_KEY);
+  return stored ? stored.trim() : '';
+}
+
+function validateOpenRouterKeyFormat(apiKey: string): void {
+  if (!apiKey.startsWith('sk-or-')) {
+    throw new Error(
+      'OpenRouter API key appears invalid. It should start with "sk-or-". Please update it in Settings.'
+    );
   }
 }
 
@@ -16,12 +34,13 @@ interface OpenRouterMessage {
   content: string | { type: string; text?: string; image_url?: { url: string } }[];
 }
 
-async function callOpenRouter(messages: OpenRouterMessage[]): Promise<string> {
+async function callOpenRouter(messages: OpenRouterMessage[], maxTokens = 4096): Promise<string> {
   const apiKey = await getApiKey();
 
   if (!apiKey) {
     throw new Error('No API key configured. Please add your OpenRouter API key in Settings.');
   }
+  validateOpenRouterKeyFormat(apiKey);
 
   console.log('[OpenRouter] Making API request', { model: OPENROUTER_MODEL, messageCount: messages.length });
 
@@ -36,14 +55,18 @@ async function callOpenRouter(messages: OpenRouterMessage[]): Promise<string> {
     body: JSON.stringify({
       model: OPENROUTER_MODEL,
       messages,
-      // Increased from 4096 to 8192 to support larger multi-page schematic payloads and follow-up Q&A responses.
-      max_tokens: 8192,
+      max_tokens: maxTokens,
     }),
   });
 
   if (!response.ok) {
     const errorText = await response.text();
     console.error('[OpenRouter] API error', { status: response.status, body: errorText });
+    if (response.status === 401) {
+      throw new Error(
+        'OpenRouter API error 401 (Unauthorized). Verify your OpenRouter key in Settings and ensure your request includes Authorization: Bearer <key>, HTTP-Referer, and X-Title headers.'
+      );
+    }
     throw new Error(`OpenRouter API error ${response.status}: ${errorText}`);
   }
 
@@ -52,6 +75,146 @@ async function callOpenRouter(messages: OpenRouterMessage[]): Promise<string> {
   const content = data.choices?.[0]?.message?.content;
   if (!content) throw new Error('No content in OpenRouter response');
   return content;
+}
+
+async function callOpenAIVision(imageUrl: string, prompt: string): Promise<string> {
+  const apiKey = await getOpenAIKey();
+  if (!apiKey) {
+    throw new Error('OpenAI key is not configured.');
+  }
+
+  const response = await fetch('https://api.openai.com/v1/chat/completions', {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      model: OPENAI_VISION_MODEL,
+      messages: [
+        {
+          role: 'user',
+          content: [
+            { type: 'text', text: prompt },
+            { type: 'image_url', image_url: { url: imageUrl } },
+          ],
+        },
+      ],
+      max_tokens: 2048,
+    }),
+  });
+
+  if (!response.ok) {
+    const errorText = await response.text();
+    throw new Error(`OpenAI API error ${response.status}: ${errorText}`);
+  }
+
+  const data = await response.json();
+  const content = data.choices?.[0]?.message?.content;
+  if (!content) {
+    throw new Error('No content in OpenAI vision response');
+  }
+  return typeof content === 'string' ? content.trim() : String(content);
+}
+
+async function callGroqVision(imageUrl: string, prompt: string): Promise<string> {
+  const apiKey = await getGroqKey();
+  if (!apiKey) {
+    throw new Error('Groq key is not configured.');
+  }
+
+  const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      model: GROQ_VISION_MODEL,
+      messages: [
+        {
+          role: 'user',
+          content: [
+            { type: 'text', text: prompt },
+            { type: 'image_url', image_url: { url: imageUrl } },
+          ],
+        },
+      ],
+      max_tokens: 2048,
+    }),
+  });
+
+  if (!response.ok) {
+    const errorText = await response.text();
+    throw new Error(`Groq API error ${response.status}: ${errorText}`);
+  }
+
+  const data = await response.json();
+  const content = data.choices?.[0]?.message?.content;
+  if (!content) {
+    throw new Error('No content in Groq vision response');
+  }
+  return typeof content === 'string' ? content.trim() : String(content);
+}
+
+async function callVisionWithFallback(imageUrl: string, prompt: string): Promise<string> {
+  const openRouterKey = await getApiKey();
+  const openAIKey = await getOpenAIKey();
+  const groqKey = await getGroqKey();
+  const uiPrefs = await loadUIPreferences();
+  const selectedProvider = uiPrefs.visionProvider;
+
+  const attempts: { name: string; run: () => Promise<string> }[] = [];
+  const allowOpenRouter = selectedProvider === 'all' || selectedProvider === 'openrouter';
+  const allowOpenAI = selectedProvider === 'all' || selectedProvider === 'openai';
+  const allowGroq = selectedProvider === 'all' || selectedProvider === 'groq';
+
+  if (allowOpenRouter && openRouterKey) {
+    attempts.push({
+      name: 'openrouter',
+      run: () =>
+        callOpenRouter(
+          [
+            {
+              role: 'user',
+              content: [
+                { type: 'text', text: prompt },
+                { type: 'image_url', image_url: { url: imageUrl } },
+              ],
+            },
+          ],
+          4096
+        ),
+    });
+  }
+  if (allowOpenAI && openAIKey) {
+    attempts.push({ name: 'openai', run: () => callOpenAIVision(imageUrl, prompt) });
+  }
+  if (allowGroq && groqKey) {
+    attempts.push({ name: 'groq', run: () => callGroqVision(imageUrl, prompt) });
+  }
+
+  if (attempts.length === 0) {
+    throw new Error(
+      selectedProvider === 'all'
+        ? 'No vision provider key configured. Add OpenRouter, OpenAI, or Groq API key in Settings.'
+        : `No API key configured for selected provider "${selectedProvider}". Add it in Settings or switch to "All 3 (Auto)".`
+    );
+  }
+
+  const errors: string[] = [];
+  for (const attempt of attempts) {
+    try {
+      console.log('[Vision] Attempting provider', { provider: attempt.name });
+      return await attempt.run();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      console.error('[Vision] Provider failed', { provider: attempt.name, message });
+      errors.push(`${attempt.name}: ${message}`);
+    }
+  }
+
+  throw new Error(`All vision providers failed. ${errors.join(' | ')}`);
 }
 
 // ---------------------------------------------------------------------------
@@ -131,16 +294,9 @@ function parseJsonResult<T>(content: string, label: string): T {
 export async function analyzeSchematic(base64Image: string): Promise<AnalysisResult> {
   console.log('[OpenRouter] analyzeSchematic called, image size:', base64Image.length);
 
-  const content = await callOpenRouter([
-    { role: 'system', content: ANALYSIS_SYSTEM_PROMPT },
-    {
-      role: 'user',
-      content: [
-        { type: 'text', text: 'Analyze this electrical schematic and extract ALL wiring information as specified.' },
-        { type: 'image_url', image_url: { url: `data:image/jpeg;base64,${base64Image}` } },
-      ],
-    },
-  ]);
+  const imageUrl = `data:image/jpeg;base64,${base64Image}`;
+  const prompt = `${ANALYSIS_SYSTEM_PROMPT}\n\nAnalyze this electrical schematic and extract ALL wiring information as specified.`;
+  const content = await callVisionWithFallback(imageUrl, prompt);
 
   const parsed = parseJsonResult<AnalysisResult>(content, 'analyzeSchematic');
   console.log('[OpenRouter] analyzeSchematic parsed', {
@@ -176,7 +332,7 @@ export async function analyzeMultipleImages(base64Images: string[]): Promise<Ana
         ...imageContentParts,
       ],
     },
-  ]);
+  ], 8192);
 
   const parsed = parseJsonResult<AnalysisResult>(content, 'analyzeMultipleImages');
   console.log('[OpenRouter] analyzeMultipleImages parsed', {
@@ -212,12 +368,12 @@ Return ONLY a valid JSON array — no markdown:
   const userMessage = `Generate ${direction} reading steps starting at: ${startPoint}
 
 Schematic analysis:
-${JSON.stringify(analysis, null, 2)}`;
+${JSON.stringify(analysis)}`;
 
   const content = await callOpenRouter([
     { role: 'system', content: systemPrompt },
     { role: 'user', content: userMessage },
-  ]);
+  ], 4096);
 
   const steps = parseJsonResult<ReadingStep[]>(content, 'generateReadingSteps');
   console.log('[OpenRouter] generateReadingSteps parsed', { stepCount: steps.length });
@@ -239,7 +395,7 @@ export async function getSymbolClarification(symbolType: string): Promise<string
 2. Its standard NEMA/IEC designation code if applicable
 3. The most important wiring consideration for a field electrician`,
     },
-  ]);
+  ], 700);
 
   console.log('[OpenRouter] getSymbolClarification response received');
   return content.trim();
@@ -255,18 +411,9 @@ export async function identifySymbolRegion(
 ): Promise<string> {
   console.log('[OpenRouter] identifySymbolRegion called');
 
-  const content = await callOpenRouter([
-    {
-      role: 'user',
-      content: [
-        {
-          type: 'text',
-          text: `Focus on the region described as: "${regionDescription}". Identify the electrical symbol in that area. Provide a 1-2 sentence technical description: what type of component it is, its standard designation code, and one key wiring note for a field electrician.`,
-        },
-        { type: 'image_url', image_url: { url: `data:image/jpeg;base64,${base64Image}` } },
-      ],
-    },
-  ]);
+  const imageUrl = `data:image/jpeg;base64,${base64Image}`;
+  const prompt = `Focus on the region described as: "${regionDescription}". Identify the electrical symbol in that area. Provide a 1-2 sentence technical description: what type of component it is, its standard designation code, and one key wiring note for a field electrician.`;
+  const content = await callVisionWithFallback(imageUrl, prompt);
 
   return content.trim();
 }
@@ -291,7 +438,7 @@ export async function answerSchematicQuestion(
       role: 'user',
       content: `Schematic analysis:\n${JSON.stringify(analysis, null, 2)}\n\nUser question:\n${question}`,
     },
-  ]);
+  ], 1800);
 
   return content.trim();
 }

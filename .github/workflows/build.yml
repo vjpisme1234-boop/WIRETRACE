@@ -17,6 +17,9 @@ on:
           - preview
           - development
 
+permissions:
+  contents: read
+
 jobs:
   build-android-apk:
     name: Android – Signed APK

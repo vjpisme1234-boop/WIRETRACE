@@ -32,8 +32,6 @@
       "permissions": [
         "android.permission.CAMERA",
         "android.permission.READ_MEDIA_IMAGES",
-        "android.permission.CAMERA",
-        "android.permission.READ_MEDIA_IMAGES",
         "android.permission.READ_EXTERNAL_STORAGE",
         "android.permission.WRITE_EXTERNAL_STORAGE",
         "android.permission.RECORD_AUDIO"
@@ -63,11 +61,17 @@
     "experiments": {
       "typedRoutes": true
     },
+
     "extra": {
       "router": {},
       "eas": {
         "projectId": "227c64f5-68a5-46e2-ab10-60823a4a8bae"
-      }
+      },
+
+      /* ⭐⭐ THE CRITICAL PART ⭐⭐ */
+      "claudeKey": process.env.CLAUDE_API_KEY,
+      "openaiKey": process.env.OPENAI_API_KEY,
+      "groqKey": process.env.GROQ_API_KEY
     }
   }
 }

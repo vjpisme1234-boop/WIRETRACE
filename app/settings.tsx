@@ -12,8 +12,9 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import * as SecureStore from 'expo-secure-store';
 import { ArrowLeft, CheckCircle, Info, Key, Mic, Zap } from 'lucide-react-native';
-import { WT, OPENROUTER_API_KEY, STORAGE_KEYS } from '@/constants/wiretrace';
-import { loadTTSSettings, saveTTSSettings, TTSSettings } from '@/utils/tts';
+import { WT, STORAGE_KEYS } from '@/constants/wiretrace';
+import { loadTTSSettings, saveTTSSettings, speakTextWithSettings, stopSpeech, TTSSettings } from '@/utils/tts';
+import { DEFAULT_UI_PREFERENCES, LayoutPreset, loadUIPreferences, saveUIPreferences, UIPreferences, VisualMode, VisionProviderPreference } from '@/utils/ui-preferences';
 
 function AnimatedPressable({
   onPress,
@@ -105,23 +106,33 @@ const segStyles = StyleSheet.create({
 
 export default function SettingsScreen() {
   const insets = useSafeAreaInsets();
-  const [apiKey, setApiKey] = useState(OPENROUTER_API_KEY);
+  const [apiKey, setApiKey] = useState('');
+  const [openAIApiKey, setOpenAIApiKey] = useState('');
+  const [groqApiKey, setGroqApiKey] = useState('');
   const [settings, setSettings] = useState<TTSSettings>({
     speed: 'normal',
     voice: 'default',
     autoAdvanceDelay: 'off',
   });
+  const [uiPrefs, setUiPrefs] = useState<UIPreferences>(DEFAULT_UI_PREFERENCES);
   const [saved, setSaved] = useState(false);
+  const [testingVoice, setTestingVoice] = useState(false);
 
   useEffect(() => {
     const load = async () => {
       console.log('[Settings] Loading settings');
-      const [storedKey, ttsSettings] = await Promise.all([
+      const [storedKey, storedOpenAIKey, storedGroqKey, ttsSettings, storedUiPrefs] = await Promise.all([
         SecureStore.getItemAsync(STORAGE_KEYS.API_KEY),
+        SecureStore.getItemAsync(STORAGE_KEYS.OPENAI_API_KEY),
+        SecureStore.getItemAsync(STORAGE_KEYS.GROQ_API_KEY),
         loadTTSSettings(),
+        loadUIPreferences(),
       ]);
       if (storedKey) setApiKey(storedKey);
+      if (storedOpenAIKey) setOpenAIApiKey(storedOpenAIKey);
+      if (storedGroqKey) setGroqApiKey(storedGroqKey);
       setSettings(ttsSettings);
+      setUiPrefs(storedUiPrefs);
     };
     load();
   }, []);
@@ -129,9 +140,21 @@ export default function SettingsScreen() {
   const handleSave = async () => {
     console.log('[Settings] Save button pressed');
     try {
+      const openRouterKey = apiKey.trim();
+      const openAIKey = openAIApiKey.trim();
+      const groqKey = groqApiKey.trim();
       await Promise.all([
-        SecureStore.setItemAsync(STORAGE_KEYS.API_KEY, apiKey),
+        openRouterKey
+          ? SecureStore.setItemAsync(STORAGE_KEYS.API_KEY, openRouterKey)
+          : SecureStore.deleteItemAsync(STORAGE_KEYS.API_KEY),
+        openAIKey
+          ? SecureStore.setItemAsync(STORAGE_KEYS.OPENAI_API_KEY, openAIKey)
+          : SecureStore.deleteItemAsync(STORAGE_KEYS.OPENAI_API_KEY),
+        groqKey
+          ? SecureStore.setItemAsync(STORAGE_KEYS.GROQ_API_KEY, groqKey)
+          : SecureStore.deleteItemAsync(STORAGE_KEYS.GROQ_API_KEY),
         saveTTSSettings(settings),
+        saveUIPreferences(uiPrefs),
       ]);
       setSaved(true);
       setTimeout(() => setSaved(false), 2000);
@@ -143,6 +166,28 @@ export default function SettingsScreen() {
 
   const updateSettings = (patch: Partial<TTSSettings>) => {
     setSettings((prev) => ({ ...prev, ...patch }));
+  };
+
+  const updateUiPrefs = (patch: Partial<UIPreferences>) => {
+    setUiPrefs((prev) => ({ ...prev, ...patch }));
+  };
+
+  const handleTestVoice = async () => {
+    if (testingVoice) {
+      await stopSpeech();
+      setTestingVoice(false);
+      return;
+    }
+
+    setTestingVoice(true);
+    const sample =
+      settings.language === 'spanish'
+        ? 'Prueba de voz de WireTrace. Di siguiente para continuar.'
+        : 'WireTrace voice test. Say next to continue.';
+
+    await speakTextWithSettings(settings, sample, () => {
+      setTestingVoice(false);
+    });
   };
 
   return (
@@ -188,11 +233,63 @@ export default function SettingsScreen() {
             placeholderTextColor={WT.textTertiary}
             autoCapitalize="none"
             autoCorrect={false}
-            secureTextEntry={false}
+            secureTextEntry={true}
             multiline={false}
           />
           <Text style={styles.fieldHint}>
             Used for AI schematic analysis. Get your key at openrouter.ai
+          </Text>
+        </View>
+
+        {/* OpenAI API Key */}
+        <View style={styles.section}>
+          <View style={styles.sectionHeader}>
+            <Key size={16} color={WT.blue} />
+            <Text style={styles.sectionTitle}>OpenAI API Key</Text>
+          </View>
+          <Text style={styles.fieldLabel}>API Key</Text>
+          <TextInput
+            style={styles.apiKeyInput}
+            value={openAIApiKey}
+            onChangeText={(t) => {
+              console.log('[Settings] OpenAI API key changed');
+              setOpenAIApiKey(t);
+            }}
+            placeholder="sk-..."
+            placeholderTextColor={WT.textTertiary}
+            autoCapitalize="none"
+            autoCorrect={false}
+            secureTextEntry={true}
+            multiline={false}
+          />
+          <Text style={styles.fieldHint}>
+            Used for OpenAI vision calls. Stored locally on this device.
+          </Text>
+        </View>
+
+        {/* Groq API Key */}
+        <View style={styles.section}>
+          <View style={styles.sectionHeader}>
+            <Key size={16} color={WT.blue} />
+            <Text style={styles.sectionTitle}>Groq API Key</Text>
+          </View>
+          <Text style={styles.fieldLabel}>API Key</Text>
+          <TextInput
+            style={styles.apiKeyInput}
+            value={groqApiKey}
+            onChangeText={(t) => {
+              console.log('[Settings] Groq API key changed');
+              setGroqApiKey(t);
+            }}
+            placeholder="gsk_..."
+            placeholderTextColor={WT.textTertiary}
+            autoCapitalize="none"
+            autoCorrect={false}
+            secureTextEntry={true}
+            multiline={false}
+          />
+          <Text style={styles.fieldHint}>
+            Used for Groq vision calls. Stored locally on this device.
           </Text>
         </View>
 
@@ -253,6 +350,133 @@ export default function SettingsScreen() {
           </Text>
         </View>
 
+        <View style={styles.section}>
+          <View style={styles.sectionHeader}>
+            <Mic size={16} color={WT.blue} />
+            <Text style={styles.sectionTitle}>Voice Language</Text>
+          </View>
+          <SegmentControl
+            options={['english', 'spanish'] as TTSSettings['language'][]}
+            value={settings.language}
+            onChange={(v) => {
+              console.log('[Settings] Voice language changed', { language: v });
+              updateSettings({ language: v });
+            }}
+            labels={{ english: 'English', spanish: 'Spanish' }}
+          />
+          <Text style={styles.fieldHint}>
+            Controls read-aloud language and voice command recognition language.
+          </Text>
+          <AnimatedPressable onPress={handleTestVoice} style={styles.testVoiceBtn} scaleValue={0.95}>
+            <Text style={styles.testVoiceBtnText}>
+              {testingVoice
+                ? settings.language === 'spanish'
+                  ? 'Detener prueba de voz'
+                  : 'Stop Voice Test'
+                : settings.language === 'spanish'
+                ? 'Probar voz'
+                : 'Test Voice'}
+            </Text>
+          </AnimatedPressable>
+        </View>
+
+        <View style={styles.section}>
+          <View style={styles.sectionHeader}>
+            <Info size={16} color={WT.blue} />
+            <Text style={styles.sectionTitle}>Voice Commands Guide</Text>
+          </View>
+          <View style={styles.voiceGuideCard}>
+            <Text style={styles.voiceGuideText}>
+              After each step is read aloud, WireTrace pauses and listens for your command.
+            </Text>
+            <Text style={styles.voiceGuideCommand}>
+              • Say "next" to continue to the next step
+            </Text>
+            <Text style={styles.voiceGuideCommand}>
+              • Say "go back" to move back one step
+            </Text>
+            <Text style={styles.voiceGuideCommand}>
+              • Say "help" to ask an AI question by voice, then speak your question
+            </Text>
+            <Text style={styles.voiceGuideCommand}>
+              • Say "repeat" to hear the current step again
+            </Text>
+            <Text style={styles.voiceGuideText}>
+              Spanish mode uses: "siguiente", "regresa", "ayuda", and "repite".
+            </Text>
+          </View>
+        </View>
+
+        <View style={styles.section}>
+          <View style={styles.sectionHeader}>
+            <Info size={16} color={WT.blue} />
+            <Text style={styles.sectionTitle}>UI Visual Mode</Text>
+          </View>
+          <SegmentControl
+            options={['normalLight', 'highContrast', 'detailedSymbols'] as VisualMode[]}
+            value={uiPrefs.visualMode}
+            onChange={(v) => {
+              console.log('[Settings] Visual mode changed', { visualMode: v });
+              updateUiPrefs({ visualMode: v });
+            }}
+            labels={{
+              normalLight: 'Light',
+              highContrast: 'Highlight',
+              detailedSymbols: 'Symbols',
+            }}
+          />
+          <Text style={styles.fieldHint}>
+            Choose a visual mode for readability and symbol detail emphasis.
+          </Text>
+        </View>
+
+        <View style={styles.section}>
+          <View style={styles.sectionHeader}>
+            <Info size={16} color={WT.blue} />
+            <Text style={styles.sectionTitle}>AI Vision Provider</Text>
+          </View>
+          <SegmentControl
+            options={['all', 'openrouter', 'openai', 'groq'] as VisionProviderPreference[]}
+            value={uiPrefs.visionProvider}
+            onChange={(v) => {
+              console.log('[Settings] Vision provider preference changed', { visionProvider: v });
+              updateUiPrefs({ visionProvider: v });
+            }}
+            labels={{
+              all: 'All 3 (Auto)',
+              openrouter: 'OpenRouter',
+              openai: 'OpenAI',
+              groq: 'Groq',
+            }}
+          />
+          <Text style={styles.fieldHint}>
+            All 3 uses automatic fallback. Single provider forces only that AI.
+          </Text>
+        </View>
+
+        <View style={styles.section}>
+          <View style={styles.sectionHeader}>
+            <Info size={16} color={WT.blue} />
+            <Text style={styles.sectionTitle}>Layout & Tool Preset</Text>
+          </View>
+          <SegmentControl
+            options={['industrial', 'residential', 'commercial'] as LayoutPreset[]}
+            value={uiPrefs.layoutPreset}
+            onChange={(v) => {
+              console.log('[Settings] Layout preset changed', { layoutPreset: v });
+              updateUiPrefs({ layoutPreset: v });
+            }}
+            labels={{
+              industrial: 'Industrial',
+              residential: 'Residential',
+              commercial: 'Commercial',
+            }}
+          />
+          <Text style={styles.fieldHint}>
+            Select a workflow layout tuned for industrial wiring, residential, or commercial jobs.
+          </Text>
+        </View>
+
         {/* About */}
         <View style={styles.section}>
           <View style={styles.sectionHeader}>
@@ -268,9 +492,9 @@ export default function SettingsScreen() {
             <View style={styles.aboutDivider} />
             <Text style={styles.aboutModel}>
               {'AI Model: '}
-              <Text style={styles.aboutModelName}>Google Gemini 2.5 Flash</Text>
+              <Text style={styles.aboutModelName}>Claude Sonnet 4.5, OpenAI, and Groq</Text>
             </Text>
-            <Text style={styles.aboutPowered}>Powered by OpenRouter</Text>
+            <Text style={styles.aboutPowered}>Powered by multiple vision providers</Text>
           </View>
         </View>
       </ScrollView>
@@ -344,6 +568,38 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: WT.textTertiary,
     lineHeight: 17,
+  },
+  voiceGuideCard: {
+    backgroundColor: WT.bgCard,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: WT.border,
+    padding: 12,
+    gap: 8,
+  },
+  voiceGuideText: {
+    fontSize: 13,
+    color: WT.textSecondary,
+    lineHeight: 19,
+  },
+  voiceGuideCommand: {
+    fontSize: 13,
+    color: WT.textPrimary,
+    lineHeight: 19,
+  },
+  testVoiceBtn: {
+    marginTop: 6,
+    backgroundColor: WT.bgCardAlt,
+    borderWidth: 1,
+    borderColor: WT.border,
+    borderRadius: 10,
+    paddingVertical: 10,
+    alignItems: 'center',
+  },
+  testVoiceBtnText: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: WT.textPrimary,
   },
   apiKeyInput: {
     backgroundColor: WT.bgInput,

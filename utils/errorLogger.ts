@@ -1,5 +1,5 @@
 // Global error logging for runtime errors
-// Captures console.log/warn/error and sends to Newly server for AI debugging
+// Captures console.log/warn/error for AI debugging
 
 import { Platform } from "react-native";
 import Constants from "expo-constants";
@@ -117,7 +117,7 @@ const flushLogs = async () => {
           fetchErrorLogged = true;
           // Use a different method to avoid recursion - write directly without going through our intercept
           if (typeof window !== 'undefined' && window.console) {
-            (window.console as any).__proto__.log.call(console, '[Newly] Fetch error (will not repeat):', e.message || e);
+            (window.console as any).__proto__.log.call(console, '[WireTrace] Fetch error (will not repeat):', e.message || e);
           }
         }
       });
@@ -300,9 +300,9 @@ export const setupErrorLogging = () => {
 
   // Log initialization info using original console (not intercepted)
   const logServerUrl = getLogServerUrl();
-  originalConsoleLog('[Newly] Setting up error logging...');
-  originalConsoleLog('[Newly] Log server URL:', logServerUrl || 'NOT AVAILABLE');
-  originalConsoleLog('[Newly] Platform:', Platform.OS);
+  originalConsoleLog('[WireTrace] Setting up error logging...');
+  originalConsoleLog('[WireTrace] Log server URL:', logServerUrl || 'NOT AVAILABLE');
+  originalConsoleLog('[WireTrace] Platform:', Platform.OS);
 
   // Override console.log to capture and send to server
   console.log = (...args: any[]) => {

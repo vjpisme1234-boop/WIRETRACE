@@ -11,7 +11,7 @@ import {
   View,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { router, useLocalSearchParams } from 'expo-router';
+import { router, useFocusEffect, useLocalSearchParams } from 'expo-router';
 import * as FileSystem from 'expo-file-system/legacy';
 import {
   AlertTriangle,
@@ -20,13 +20,16 @@ import {
   ChevronDown,
   ChevronUp,
   Cpu,
+  Highlighter,
+  MessageSquare,
   Play,
   RefreshCw,
   Search,
+  Send,
   Zap,
 } from 'lucide-react-native';
 import { WT } from '@/constants/wiretrace';
-import { analyzeSchematic, AnalysisResult } from '@/utils/openrouter';
+import { analyzeSchematic, analyzeMultipleImages, AnalysisResult } from '@/utils/openrouter';
 import {
   generateSchematicName,
   getSchematic,
@@ -37,6 +40,7 @@ import {
   Connection,
   UnknownSymbol,
 } from '@/utils/schematic-storage';
+import { DEFAULT_UI_PREFERENCES, loadUIPreferences } from '@/utils/ui-preferences';
 
 function resolveImageSource(source: string | number | ImageSourcePropType | undefined): ImageSourcePropType {
   if (!source) return { uri: '' };
@@ -80,7 +84,7 @@ function SkeletonLine({ width, height = 14 }: { width: number | string; height?:
         Animated.timing(opacity, { toValue: 0.3, duration: 800, useNativeDriver: true }),
       ])
     ).start();
-  }, []);
+  }, [opacity]);
   return (
     <Animated.View
       style={[
@@ -115,7 +119,7 @@ type StartPoint = 'beginning' | 'end' | 'specific';
 
 export default function AnalyzeScreen() {
   const insets = useSafeAreaInsets();
-  const params = useLocalSearchParams<{ imageUri?: string; schematicId?: string }>();
+  const params = useLocalSearchParams<{ imageUri?: string; imageUris?: string; schematicId?: string }>();
 
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -127,6 +131,12 @@ export default function AnalyzeScreen() {
   const [searchQuery, setSearchQuery] = useState('');
   const [showStartPicker, setShowStartPicker] = useState(false);
   const [generatingSteps, setGeneratingSteps] = useState(false);
+  const [aiQuestion, setAiQuestion] = useState('');
+  const [aiAnswer, setAiAnswer] = useState<string | null>(null);
+  const [aiSuggestions, setAiSuggestions] = useState<string | null>(null);
+  const [askingAi, setAskingAi] = useState(false);
+  const [highlightKey, setHighlightKey] = useState<string | null>(null);
+  const [uiPrefs, setUiPrefs] = useState(DEFAULT_UI_PREFERENCES);
 
   const pulseAnim = useRef(new Animated.Value(0.6)).current;
 
@@ -140,7 +150,23 @@ export default function AnalyzeScreen() {
     if (loading) pulse.start();
     else pulse.stop();
     return () => pulse.stop();
-  }, [loading]);
+  }, [loading, pulseAnim]);
+
+  useFocusEffect(
+    useCallback(() => {
+      let isMounted = true;
+      loadUIPreferences()
+        .then((prefs) => {
+          if (isMounted) setUiPrefs(prefs);
+        })
+        .catch((error) => {
+          console.error('[Analyze] Failed to refresh UI preferences', error);
+        });
+      return () => {
+        isMounted = false;
+      };
+    }, [])
+  );
 
   const runAnalysis = useCallback(async (imageUri: string) => {
     setLoading(true);
@@ -161,6 +187,7 @@ export default function AnalyzeScreen() {
         imageUri,
         analyzedAt: new Date().toISOString(),
         name: generateSchematicName(),
+        summary: result.summary,
         wireCount: result.wires?.length ?? 0,
         componentCount: result.components?.length ?? 0,
         wires: (result.wires ?? []).map((w) => ({ ...w } as WireInfo)),
@@ -182,6 +209,49 @@ export default function AnalyzeScreen() {
     }
   }, []);
 
+  const runMultiAnalysis = useCallback(async (imageUris: string[]) => {
+    setLoading(true);
+    setError(null);
+    console.log('[Analyze] Starting multi-page analysis', { pageCount: imageUris.length });
+
+    try {
+      console.log('[Analyze] Reading all images as base64');
+      const base64Images = await Promise.all(
+        imageUris.map((uri) =>
+          FileSystem.readAsStringAsync(uri, { encoding: FileSystem.EncodingType.Base64 })
+        )
+      );
+
+      console.log('[Analyze] Calling OpenRouter analyzeMultipleImages');
+      const result: AnalysisResult = await analyzeMultipleImages(base64Images);
+
+      const newSchematic: SchematicAnalysis = {
+        id: `sch_${Date.now()}`,
+        imageUri: imageUris[0],
+        analyzedAt: new Date().toISOString(),
+        name: generateSchematicName(),
+        summary: result.summary,
+        wireCount: result.wires?.length ?? 0,
+        componentCount: result.components?.length ?? 0,
+        wires: (result.wires ?? []).map((w) => ({ ...w } as WireInfo)),
+        components: (result.components ?? []).map((c) => ({ ...c } as ComponentInfo)),
+        connections: (result.connections ?? []).map((c) => ({ ...c } as Connection)),
+        unknownSymbols: (result.unknownSymbols ?? []).map((u) => ({ ...u } as UnknownSymbol)),
+        readingSteps: [],
+      };
+
+      await saveSchematic(newSchematic);
+      setSchematic(newSchematic);
+      console.log('[Analyze] Multi-page analysis complete', { id: newSchematic.id, wires: newSchematic.wireCount });
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : 'Analysis failed';
+      console.error('[Analyze] Multi-page analysis error', e);
+      setError(msg);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
   useEffect(() => {
     if (params.schematicId) {
       console.log('[Analyze] Loading existing schematic', { id: params.schematicId });
@@ -189,10 +259,14 @@ export default function AnalyzeScreen() {
         if (s) setSchematic(s);
         else setError('Schematic not found');
       });
+    } else if (params.imageUris) {
+      const uris = JSON.parse(params.imageUris as string) as string[];
+      console.log('[Analyze] Multi-page URIs received', { count: uris.length });
+      runMultiAnalysis(uris);
     } else if (params.imageUri) {
       runAnalysis(params.imageUri);
     }
-  }, []);
+  }, [params.imageUri, params.imageUris, params.schematicId, runAnalysis, runMultiAnalysis]);
 
   const handleStartReading = async () => {
     if (!schematic) return;
@@ -252,8 +326,66 @@ export default function AnalyzeScreen() {
     console.log('[Analyze] Identify unknown symbol pressed', { symbolId });
     router.push({
       pathname: '/identify-symbol',
-      params: { schematicId: schematic.id, symbolId },
+      params: { schematicId: schematic.id, symbolId, imageUri: schematic.imageUri },
     });
+  };
+
+  const toggleHighlight = (key: string) => {
+    setHighlightKey((prev) => (prev === key ? null : key));
+  };
+
+  const handleAskAi = async () => {
+    if (!schematic || !aiQuestion.trim() || askingAi) return;
+    setAskingAi(true);
+    setAiAnswer(null);
+    setError(null);
+    try {
+      const { answerSchematicQuestion } = await import('@/utils/openrouter');
+      const answer = await answerSchematicQuestion(
+        {
+          wires: schematic.wires,
+          components: schematic.components,
+          connections: schematic.connections,
+          unknownSymbols: schematic.unknownSymbols,
+          summary: schematic.summary ?? '',
+        },
+        aiQuestion.trim()
+      );
+      setAiAnswer(answer);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : 'Failed to get AI answer';
+      console.error('[Analyze] AI question error', e);
+      setError(msg);
+    } finally {
+      setAskingAi(false);
+    }
+  };
+
+  const handleGetSuggestions = async () => {
+    if (!schematic || askingAi) return;
+    setAskingAi(true);
+    setAiSuggestions(null);
+    setError(null);
+    try {
+      const { answerSchematicQuestion } = await import('@/utils/openrouter');
+      const suggestions = await answerSchematicQuestion(
+        {
+          wires: schematic.wires,
+          components: schematic.components,
+          connections: schematic.connections,
+          unknownSymbols: schematic.unknownSymbols,
+          summary: schematic.summary ?? '',
+        },
+        'Give concise suggestions for what I should do next while working on this schematic. Include checks, safety reminders, and one likely troubleshooting step.'
+      );
+      setAiSuggestions(suggestions);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : 'Failed to get AI suggestions';
+      console.error('[Analyze] AI suggestions error', e);
+      setError(msg);
+    } finally {
+      setAskingAi(false);
+    }
   };
 
   const allItems = schematic
@@ -268,9 +400,43 @@ export default function AnalyzeScreen() {
   );
 
   const unknownCount = schematic?.unknownSymbols.filter((u) => !u.userIdentifiedAs).length ?? 0;
+  const isHighContrast = uiPrefs.visualMode === 'highContrast';
+  const isDetailedSymbols = uiPrefs.visualMode === 'detailedSymbols';
+  const isLightMode = uiPrefs.visualMode === 'normalLight';
+  const activeVisionProviderLabel =
+    uiPrefs.visionProvider === 'openrouter'
+      ? 'OpenRouter'
+      : uiPrefs.visionProvider === 'openai'
+      ? 'OpenAI'
+      : uiPrefs.visionProvider === 'groq'
+      ? 'Groq'
+      : 'Auto (OpenRouter → OpenAI → Groq)';
+  const wireDisplayLimit = uiPrefs.layoutPreset === 'residential' ? 5 : uiPrefs.layoutPreset === 'commercial' ? 10 : 8;
+  const connectionDisplayLimit = uiPrefs.layoutPreset === 'residential' ? 4 : uiPrefs.layoutPreset === 'commercial' ? 8 : 6;
+
+  // Map color name to display hex (falls back to WT.blue)
+  const WIRE_COLOR_MAP: Record<string, string> = {
+    red: '#FF3B30', black: '#3A3A3C', white: '#FFFFFF', blue: '#007AFF',
+    yellow: '#FFD60A', green: '#34C759', orange: '#FF9500', brown: '#A2845E',
+    purple: '#AF52DE', violet: '#AF52DE', gray: '#8E8E93', grey: '#8E8E93',
+    pink: '#FF2D55', 'green-yellow': '#B8E000',
+  };
+  const wireColor = (color?: string) =>
+    (color && WIRE_COLOR_MAP[color.toLowerCase()]) || WT.blue;
+
+  // Confidence badge helper
+  const ConfBadge = ({ confidence }: { confidence?: number }) => {
+    if (confidence === undefined || confidence >= 0.8) return null;
+    const isLow = confidence < 0.5;
+    return (
+      <View style={[styles.confBadge, isLow ? styles.confBadgeLow : styles.confBadgeMed]}>
+        <Text style={[styles.confBadgeText, isLow && styles.confBadgeTextLow]}>{Math.round(confidence * 100)}%</Text>
+      </View>
+    );
+  };
 
   return (
-    <View style={[styles.root, { paddingTop: insets.top }]}>
+    <View style={[styles.root, isLightMode && styles.rootLight, isDetailedSymbols && styles.rootSymbols, { paddingTop: insets.top }]}>
       {/* Header */}
       <View style={styles.header}>
         <AnimatedPressable onPress={() => {
@@ -279,7 +445,7 @@ export default function AnalyzeScreen() {
         }} style={styles.backBtn} scaleValue={0.9}>
           <ArrowLeft size={22} color={WT.blue} />
         </AnimatedPressable>
-        <Text style={styles.headerTitle}>Analyze Schematic</Text>
+        <Text style={[styles.headerTitle, isLightMode && styles.headerTitleLight, isDetailedSymbols && styles.headerTitleSymbols]}>Analyze Schematic</Text>
         <View style={{ width: 44 }} />
       </View>
 
@@ -307,6 +473,7 @@ export default function AnalyzeScreen() {
             </Animated.View>
             <Text style={styles.loadingTitle}>Analyzing schematic...</Text>
             <Text style={styles.loadingSubtitle}>AI is extracting wires, components, and connections</Text>
+            <Text style={styles.loadingProviderText}>Active AI Provider: {activeVisionProviderLabel}</Text>
             <View style={{ gap: 12, marginTop: 8 }}>
               <SkeletonCard />
               <SkeletonCard />
@@ -339,6 +506,14 @@ export default function AnalyzeScreen() {
         {/* Results */}
         {schematic && !loading && (
           <>
+            <View style={[styles.prefBanner, isHighContrast && styles.prefBannerHighContrast, isDetailedSymbols && styles.prefBannerSymbols]}>
+              <Text style={[styles.prefBannerText, isLightMode && styles.prefBannerTextDark]}>
+                Visual: {uiPrefs.visualMode === 'normalLight' ? 'Normal Light' : uiPrefs.visualMode === 'highContrast' ? 'High Contrast' : 'Detailed Symbols'}
+                {' • '}
+                Layout: {uiPrefs.layoutPreset.charAt(0).toUpperCase() + uiPrefs.layoutPreset.slice(1)}
+              </Text>
+            </View>
+
             {/* Unknown symbols warning */}
             {unknownCount > 0 && (
               <View style={styles.warningBanner}>
@@ -362,11 +537,71 @@ export default function AnalyzeScreen() {
               </View>
             )}
 
+            {/* AI Summary */}
+            {schematic.summary ? (
+              <View style={styles.summaryCard}>
+                <Text style={styles.summaryLabel}>AI Summary</Text>
+                <Text style={styles.summaryText}>{schematic.summary}</Text>
+              </View>
+            ) : null}
+
+            <View style={[styles.card, isHighContrast && styles.highContrastCard]}>
+              <View style={styles.cardHeader}>
+                <MessageSquare size={16} color={WT.blue} />
+                <Text style={styles.cardTitle}>Ask AI / Get Directions</Text>
+              </View>
+              <Text style={styles.aiHelperText}>
+                Ask a question or request guidance while using this schematic.
+              </Text>
+              <AnimatedPressable
+                onPress={handleGetSuggestions}
+                style={[styles.aiSuggestBtn, askingAi && styles.aiAskBtnDisabled]}
+                disabled={askingAi}
+              >
+                <Text style={styles.aiSuggestBtnText}>{askingAi ? 'Working...' : 'Get AI Suggestions'}</Text>
+              </AnimatedPressable>
+              {aiSuggestions ? (
+                <View style={styles.aiAnswerBox}>
+                  <Text style={styles.aiAnswerLabel}>Suggestions</Text>
+                  <Text style={styles.aiAnswerText}>{aiSuggestions}</Text>
+                </View>
+              ) : null}
+              <TextInput
+                style={styles.aiInput}
+                placeholder="Example: what should I check first if wire 14 has no voltage?"
+                placeholderTextColor={WT.textTertiary}
+                value={aiQuestion}
+                onChangeText={setAiQuestion}
+                multiline
+              />
+              <AnimatedPressable
+                onPress={handleAskAi}
+                style={[styles.aiAskBtn, (!aiQuestion.trim() || askingAi) && styles.aiAskBtnDisabled]}
+                disabled={!aiQuestion.trim() || askingAi}
+              >
+                <Send size={15} color="#FFFFFF" />
+                <Text style={styles.aiAskBtnText}>{askingAi ? 'Asking AI...' : 'Ask AI'}</Text>
+              </AnimatedPressable>
+              {aiAnswer ? (
+                <View style={styles.aiAnswerBox}>
+                  <Text style={styles.aiAnswerLabel}>Answer</Text>
+                  <Text style={styles.aiAnswerText}>{aiAnswer}</Text>
+                </View>
+              ) : null}
+            </View>
+
+            <View style={styles.highlightHint}>
+              <Highlighter size={15} color={WT.yellow} />
+              <Text style={styles.highlightHintText}>
+                Tap any wire, component, connection, or unknown symbol to highlight it.
+              </Text>
+            </View>
+
             {/* Wire Summary */}
-            <View style={styles.card}>
+            <View style={[styles.card, isHighContrast && styles.highContrastCard, isDetailedSymbols && styles.symbolsCard]}>
               <View style={styles.cardHeader}>
                 <Zap size={16} color={WT.blue} />
-                <Text style={styles.cardTitle}>Wire Summary</Text>
+                <Text style={[styles.cardTitle, isDetailedSymbols && styles.symbolsPrimaryText]}>Wire Summary</Text>
                 <View style={styles.countBadge}>
                   <Text style={styles.countBadgeText}>{schematic.wireCount}</Text>
                 </View>
@@ -374,32 +609,51 @@ export default function AnalyzeScreen() {
               {schematic.wires.length === 0 ? (
                 <Text style={styles.emptyCardText}>No wires detected</Text>
               ) : (
-                schematic.wires.slice(0, 8).map((wire) => (
-                  <View key={wire.id} style={styles.wireRow}>
-                    <View style={[styles.wireColorDot, { backgroundColor: wire.color || WT.blue }]} />
-                    <Text style={styles.wireLabel}>{wire.label}</Text>
-                    <Text style={styles.wireRoute} numberOfLines={1}>
+                schematic.wires.slice(0, wireDisplayLimit).map((wire) => (
+                  <AnimatedPressable
+                    key={wire.id}
+                    onPress={() => toggleHighlight(`wire:${wire.id}`)}
+                    style={[styles.wireRow, highlightKey === `wire:${wire.id}` && styles.highlightedRow]}
+                    scaleValue={0.99}
+                  >
+                    <View style={[styles.wireColorDot, { backgroundColor: wireColor(wire.color) }]} />
+                    <Text
+                      style={[
+                        styles.wireLabel,
+                        isDetailedSymbols && styles.symbolsPrimaryText,
+                        wire.color ? { color: wireColor(wire.color) } : null,
+                      ]}
+                    >
+                      {wire.label}
+                    </Text>
+                    <Text style={[styles.wireRoute, isDetailedSymbols && styles.symbolsSecondaryText]} numberOfLines={1}>
                       {wire.fromPoint}
                       {' → '}
                       {wire.toPoint}
                     </Text>
-                  </View>
+                    {wire.voltage ? (
+                      <View style={styles.voltageBadge}>
+                        <Text style={styles.voltageBadgeText}>{wire.voltage}</Text>
+                      </View>
+                    ) : null}
+                    <ConfBadge confidence={wire.confidence} />
+                  </AnimatedPressable>
                 ))
               )}
-              {schematic.wires.length > 8 && (
+              {schematic.wires.length > wireDisplayLimit && (
                 <Text style={styles.moreText}>
                   {'+'}
-                  {schematic.wires.length - 8}
+                  {schematic.wires.length - wireDisplayLimit}
                   {' more wires'}
                 </Text>
               )}
             </View>
 
             {/* Components */}
-            <View style={styles.card}>
+            <View style={[styles.card, isHighContrast && styles.highContrastCard, isDetailedSymbols && styles.symbolsCard]}>
               <View style={styles.cardHeader}>
                 <Cpu size={16} color={WT.blue} />
-                <Text style={styles.cardTitle}>Components Found</Text>
+                <Text style={[styles.cardTitle, isDetailedSymbols && styles.symbolsPrimaryText]}>Components Found</Text>
                 <View style={styles.countBadge}>
                   <Text style={styles.countBadgeText}>{schematic.componentCount}</Text>
                 </View>
@@ -408,29 +662,35 @@ export default function AnalyzeScreen() {
                 <Text style={styles.emptyCardText}>No components detected</Text>
               ) : (
                 schematic.components.map((comp) => (
-                  <View key={comp.id} style={styles.componentRow}>
+                  <AnimatedPressable
+                    key={comp.id}
+                    onPress={() => toggleHighlight(`component:${comp.id}`)}
+                    style={[styles.componentRow, highlightKey === `component:${comp.id}` && styles.highlightedRow]}
+                    scaleValue={0.99}
+                  >
                     <View style={styles.componentLeft}>
-                      <Text style={styles.componentLabel}>{comp.label}</Text>
+                      <Text style={[styles.componentLabel, isDetailedSymbols && styles.symbolsPrimaryText]}>{comp.label}</Text>
                       <View style={[styles.typeBadge, comp.isUnknown && styles.typeBadgeUnknown]}>
                         <Text style={[styles.typeBadgeText, comp.isUnknown && styles.typeBadgeTextUnknown]}>
                           {comp.userIdentifiedAs || comp.type}
                         </Text>
                       </View>
+                      <ConfBadge confidence={comp.confidence} />
                     </View>
-                    <Text style={styles.componentDesc} numberOfLines={2}>
+                    <Text style={[styles.componentDesc, isDetailedSymbols && styles.symbolsSecondaryText]} numberOfLines={isDetailedSymbols ? 4 : 2}>
                       {comp.description}
                     </Text>
-                  </View>
+                  </AnimatedPressable>
                 ))
               )}
             </View>
 
             {/* Unknown Symbols */}
             {schematic.unknownSymbols.length > 0 && (
-              <View style={styles.card}>
+              <View style={[styles.card, isHighContrast && styles.highContrastCard, isDetailedSymbols && styles.symbolsCard]}>
                 <View style={styles.cardHeader}>
                   <AlertTriangle size={16} color={WT.yellow} />
-                  <Text style={styles.cardTitle}>Unknown Symbols</Text>
+                  <Text style={[styles.cardTitle, isDetailedSymbols && styles.symbolsPrimaryText]}>Unknown Symbols</Text>
                   <View style={[styles.countBadge, styles.countBadgeWarning]}>
                     <Text style={[styles.countBadgeText, styles.countBadgeTextWarning]}>
                       {schematic.unknownSymbols.length}
@@ -438,9 +698,14 @@ export default function AnalyzeScreen() {
                   </View>
                 </View>
                 {schematic.unknownSymbols.map((sym) => (
-                  <View key={sym.id} style={styles.unknownRow}>
+                  <AnimatedPressable
+                    key={sym.id}
+                    onPress={() => toggleHighlight(`unknown:${sym.id}`)}
+                    style={[styles.unknownRow, highlightKey === `unknown:${sym.id}` && styles.highlightedRow]}
+                    scaleValue={0.99}
+                  >
                     <View style={{ flex: 1 }}>
-                      <Text style={styles.unknownDesc}>{sym.description}</Text>
+                      <Text style={[styles.unknownDesc, isDetailedSymbols && styles.symbolsSecondaryText]}>{sym.description}</Text>
                       {sym.userIdentifiedAs && (
                         <View style={styles.identifiedBadge}>
                           <CheckCircle size={12} color={WT.green} />
@@ -456,18 +721,18 @@ export default function AnalyzeScreen() {
                         <Text style={styles.tapIdentifyText}>Identify</Text>
                       </AnimatedPressable>
                     )}
-                  </View>
+                  </AnimatedPressable>
                 ))}
               </View>
             )}
 
             {/* Connections */}
-            <View style={styles.card}>
+            <View style={[styles.card, isHighContrast && styles.highContrastCard, isDetailedSymbols && styles.symbolsCard]}>
               <View style={styles.cardHeader}>
                 <View style={styles.connectionIcon}>
                   <Text style={styles.connectionIconText}>⟶</Text>
                 </View>
-                <Text style={styles.cardTitle}>Point-to-Point Connections</Text>
+                <Text style={[styles.cardTitle, isDetailedSymbols && styles.symbolsPrimaryText]}>Point-to-Point Connections</Text>
                 <View style={styles.countBadge}>
                   <Text style={styles.countBadgeText}>{schematic.connections.length}</Text>
                 </View>
@@ -475,19 +740,24 @@ export default function AnalyzeScreen() {
               {schematic.connections.length === 0 ? (
                 <Text style={styles.emptyCardText}>No connections detected</Text>
               ) : (
-                schematic.connections.slice(0, 6).map((conn) => (
-                  <View key={conn.id} style={styles.connectionRow}>
-                    <Text style={styles.connectionWire}>{conn.wireLabel}</Text>
-                    <Text style={styles.connectionDesc} numberOfLines={2}>
+                schematic.connections.slice(0, connectionDisplayLimit).map((conn) => (
+                  <AnimatedPressable
+                    key={conn.id}
+                    onPress={() => toggleHighlight(`connection:${conn.id}`)}
+                    style={[styles.connectionRow, highlightKey === `connection:${conn.id}` && styles.highlightedRow]}
+                    scaleValue={0.99}
+                  >
+                    <Text style={[styles.connectionWire, isDetailedSymbols && styles.symbolsPrimaryText]}>{conn.wireLabel}</Text>
+                    <Text style={[styles.connectionDesc, isDetailedSymbols && styles.symbolsSecondaryText]} numberOfLines={2}>
                       {conn.description}
                     </Text>
-                  </View>
+                  </AnimatedPressable>
                 ))
               )}
-              {schematic.connections.length > 6 && (
+              {schematic.connections.length > connectionDisplayLimit && (
                 <Text style={styles.moreText}>
                   {'+'}
-                  {schematic.connections.length - 6}
+                  {schematic.connections.length - connectionDisplayLimit}
                   {' more connections'}
                 </Text>
               )}
@@ -633,6 +903,12 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: WT.bg,
   },
+  rootLight: {
+    backgroundColor: '#F4F7FB',
+  },
+  rootSymbols: {
+    backgroundColor: '#061A22',
+  },
   header: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -652,6 +928,12 @@ const styles = StyleSheet.create({
     fontSize: 17,
     fontWeight: '600',
     color: WT.textPrimary,
+  },
+  headerTitleLight: {
+    color: '#0F172A',
+  },
+  headerTitleSymbols: {
+    color: '#D6F8FF',
   },
   scroll: {
     flex: 1,
@@ -694,6 +976,11 @@ const styles = StyleSheet.create({
     fontSize: 13,
     color: WT.textSecondary,
     textAlign: 'center',
+  },
+  loadingProviderText: {
+    fontSize: 12,
+    color: WT.blue,
+    fontWeight: '600',
   },
   errorCard: {
     flexDirection: 'row',
@@ -745,6 +1032,31 @@ const styles = StyleSheet.create({
     color: WT.yellow,
     lineHeight: 18,
   },
+  prefBanner: {
+    backgroundColor: WT.bgCardAlt,
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderWidth: 1,
+    borderColor: WT.border,
+  },
+  prefBannerHighContrast: {
+    borderColor: WT.yellow,
+    backgroundColor: 'rgba(255,214,10,0.16)',
+  },
+  prefBannerSymbols: {
+    borderColor: '#00E5FF',
+    backgroundColor: 'rgba(0,229,255,0.16)',
+  },
+  prefBannerText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: WT.textSecondary,
+    textAlign: 'center',
+  },
+  prefBannerTextDark: {
+    color: WT.textPrimary,
+  },
   identifyNowBtn: {
     backgroundColor: WT.yellow,
     borderRadius: 8,
@@ -764,6 +1076,104 @@ const styles = StyleSheet.create({
     borderColor: WT.border,
     gap: 10,
   },
+  highContrastCard: {
+    borderWidth: 2,
+    borderColor: WT.yellow,
+  },
+  symbolsCard: {
+    borderColor: 'rgba(0,229,255,0.3)',
+    backgroundColor: '#0D2530',
+  },
+  aiHelperText: {
+    fontSize: 12,
+    color: WT.textSecondary,
+    lineHeight: 18,
+  },
+  aiInput: {
+    minHeight: 70,
+    backgroundColor: WT.bgInput,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: WT.border,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    fontSize: 14,
+    color: WT.textPrimary,
+    textAlignVertical: 'top',
+  },
+  aiSuggestBtn: {
+    backgroundColor: WT.bgCardAlt,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: WT.border,
+    paddingVertical: 9,
+    alignItems: 'center',
+  },
+  aiSuggestBtnText: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: WT.textPrimary,
+  },
+  aiAskBtn: {
+    backgroundColor: WT.blue,
+    borderRadius: 10,
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+  },
+  aiAskBtnDisabled: {
+    opacity: 0.6,
+  },
+  aiAskBtnText: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#FFFFFF',
+  },
+  aiAnswerBox: {
+    backgroundColor: WT.bgCardAlt,
+    borderWidth: 1,
+    borderColor: WT.border,
+    borderRadius: 10,
+    padding: 12,
+  },
+  aiAnswerText: {
+    fontSize: 13,
+    color: WT.textPrimary,
+    lineHeight: 19,
+  },
+  aiAnswerLabel: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: WT.blue,
+    textTransform: 'uppercase',
+    letterSpacing: 0.8,
+    marginBottom: 5,
+  },
+  highlightHint: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    backgroundColor: WT.yellowMuted,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: 'rgba(255,214,10,0.2)',
+    paddingHorizontal: 10,
+    paddingVertical: 9,
+  },
+  highlightHintText: {
+    flex: 1,
+    fontSize: 12,
+    color: WT.yellow,
+  },
+  highlightedRow: {
+    backgroundColor: WT.blueMuted,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: WT.blue,
+  },
   cardHeader: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -774,6 +1184,12 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     color: WT.textPrimary,
     flex: 1,
+  },
+  symbolsPrimaryText: {
+    color: '#D6F8FF',
+  },
+  symbolsSecondaryText: {
+    color: '#9AEFFF',
   },
   countBadge: {
     backgroundColor: WT.blueMuted,
@@ -1069,5 +1485,59 @@ const styles = StyleSheet.create({
     fontSize: 17,
     fontWeight: '700',
     color: '#FFFFFF',
+  },
+  summaryCard: {
+    backgroundColor: WT.bgCard,
+    borderRadius: 14,
+    padding: 14,
+    borderWidth: 1,
+    borderColor: WT.border,
+    borderLeftWidth: 3,
+    borderLeftColor: WT.blue,
+    gap: 6,
+  },
+  summaryLabel: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: WT.blue,
+    textTransform: 'uppercase',
+    letterSpacing: 0.8,
+  },
+  summaryText: {
+    fontSize: 13,
+    color: WT.textSecondary,
+    lineHeight: 19,
+  },
+  voltageBadge: {
+    backgroundColor: WT.bgCardAlt,
+    borderRadius: 6,
+    paddingHorizontal: 5,
+    paddingVertical: 2,
+    borderWidth: 1,
+    borderColor: WT.border,
+  },
+  voltageBadgeText: {
+    fontSize: 10,
+    fontWeight: '600',
+    color: WT.textSecondary,
+  },
+  confBadge: {
+    borderRadius: 6,
+    paddingHorizontal: 5,
+    paddingVertical: 2,
+  },
+  confBadgeMed: {
+    backgroundColor: WT.yellowMuted,
+  },
+  confBadgeLow: {
+    backgroundColor: WT.redMuted,
+  },
+  confBadgeText: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: WT.yellow,
+  },
+  confBadgeTextLow: {
+    color: WT.red,
   },
 });

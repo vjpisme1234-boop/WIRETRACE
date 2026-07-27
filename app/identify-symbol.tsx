@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import {
   Animated,
+  Image,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -13,7 +14,11 @@ import { router, useLocalSearchParams } from 'expo-router';
 import { CheckCircle, X } from 'lucide-react-native';
 import { WT, SYMBOL_TYPES } from '@/constants/wiretrace';
 import { getSchematic, updateSchematic } from '@/utils/schematic-storage';
-import { getSymbolClarification } from '@/utils/openrouter';
+import * as FileSystem from 'expo-file-system/legacy';
+import { getSymbolClarification, identifySymbolRegion } from '@/utils/openrouter';
+import { AppLanguage, isSpanish, loadAppLanguage } from '@/utils/app-language';
+
+const clarificationCache = new Map<string, string>();
 
 function AnimatedPressable({
   onPress,
@@ -44,14 +49,18 @@ function AnimatedPressable({
 
 export default function IdentifySymbolScreen() {
   const insets = useSafeAreaInsets();
-  const params = useLocalSearchParams<{ schematicId: string; symbolId: string }>();
+  const params = useLocalSearchParams<{ schematicId: string; symbolId: string; imageUri?: string }>();
 
   const [selected, setSelected] = useState<string | null>(null);
   const [customText, setCustomText] = useState('');
   const [clarification, setClarification] = useState<string | null>(null);
   const [loadingClarification, setLoadingClarification] = useState(false);
+  const [loadingSuggestion, setLoadingSuggestion] = useState(false);
   const [saving, setSaving] = useState(false);
   const [symbolDesc, setSymbolDesc] = useState('');
+  const [aiSuggestion, setAiSuggestion] = useState<string | null>(null);
+  const [language, setLanguage] = useState<AppLanguage>('english');
+  const es = isSpanish(language);
 
   useEffect(() => {
     const load = async () => {
@@ -61,7 +70,8 @@ export default function IdentifySymbolScreen() {
       if (sym) setSymbolDesc(sym.description);
     };
     load();
-  }, []);
+    loadAppLanguage().then(setLanguage).catch(console.error);
+  }, [params.schematicId, params.symbolId]);
 
   const handleSelectType = async (type: string) => {
     console.log('[IdentifySymbol] Symbol type selected', { type });
@@ -70,12 +80,35 @@ export default function IdentifySymbolScreen() {
     setClarification(null);
     setLoadingClarification(true);
     try {
+      const cached = clarificationCache.get(type);
+      if (cached) {
+        setClarification(cached);
+        return;
+      }
       const text = await getSymbolClarification(type);
+      clarificationCache.set(type, text);
       setClarification(text);
     } catch (e) {
       console.error('[IdentifySymbol] Clarification fetch failed', e);
     } finally {
       setLoadingClarification(false);
+    }
+  };
+
+  const handleGetAiSuggestion = async () => {
+    if (!params.imageUri || !symbolDesc || loadingSuggestion) return;
+    setLoadingSuggestion(true);
+    setAiSuggestion(null);
+    try {
+      const base64 = await FileSystem.readAsStringAsync(params.imageUri, {
+        encoding: FileSystem.EncodingType.Base64,
+      });
+      const suggestion = await identifySymbolRegion(base64, symbolDesc);
+      setAiSuggestion(suggestion);
+    } catch (e) {
+      console.error('[IdentifySymbol] AI symbol suggestion failed', e);
+    } finally {
+      setLoadingSuggestion(false);
     }
   };
 
@@ -87,7 +120,7 @@ export default function IdentifySymbolScreen() {
     setSaving(true);
     try {
       const schematic = await getSchematic(params.schematicId);
-      if (!schematic) throw new Error('Schematic not found');
+      if (!schematic) throw new Error(es ? 'Esquema no encontrado' : 'Schematic not found');
 
       const updatedSymbols = schematic.unknownSymbols.map((u) =>
         u.id === params.symbolId ? { ...u, userIdentifiedAs: identification } : u
@@ -122,7 +155,7 @@ export default function IdentifySymbolScreen() {
       {/* Handle + header */}
       <View style={styles.sheetHandle} />
       <View style={styles.header}>
-        <Text style={styles.headerTitle}>What is this symbol?</Text>
+        <Text style={styles.headerTitle}>{es ? '¿Qué símbolo es este?' : 'What is this symbol?'}</Text>
         <AnimatedPressable onPress={handleDismiss} style={styles.closeBtn} scaleValue={0.9}>
           <X size={20} color={WT.textSecondary} />
         </AnimatedPressable>
@@ -130,7 +163,18 @@ export default function IdentifySymbolScreen() {
 
       {symbolDesc ? (
         <View style={styles.descBanner}>
-          <Text style={styles.descText}>{symbolDesc}</Text>
+          {params.imageUri ? (
+            <View style={styles.imageRow}>
+              <Image
+                source={{ uri: params.imageUri }}
+                style={styles.symbolThumb}
+                resizeMode="contain"
+              />
+              <Text style={[styles.descText, { flex: 1 }]}>{symbolDesc}</Text>
+            </View>
+          ) : (
+            <Text style={styles.descText}>{symbolDesc}</Text>
+          )}
         </View>
       ) : null}
 
@@ -140,7 +184,7 @@ export default function IdentifySymbolScreen() {
         showsVerticalScrollIndicator={false}
       >
         {/* Quick select grid */}
-        <Text style={styles.sectionLabel}>Common Symbols</Text>
+        <Text style={styles.sectionLabel}>{es ? 'Símbolos comunes' : 'Common Symbols'}</Text>
         <View style={styles.grid}>
           {SYMBOL_TYPES.map((type) => {
             const isActive = selected === type;
@@ -163,10 +207,10 @@ export default function IdentifySymbolScreen() {
         </View>
 
         {/* Custom input */}
-        <Text style={styles.sectionLabel}>Other (type it)</Text>
+        <Text style={styles.sectionLabel}>{es ? 'Otro (escribir)' : 'Other (type it)'}</Text>
         <TextInput
           style={[styles.customInput, customText && styles.customInputFilled]}
-          placeholder="e.g. Pressure sensor, VFD drive..."
+          placeholder={es ? 'ej. Sensor de presión, variador VFD...' : 'e.g. Pressure sensor, VFD drive...'}
           placeholderTextColor={WT.textTertiary}
           value={customText}
           onChangeText={(t) => {
@@ -177,14 +221,32 @@ export default function IdentifySymbolScreen() {
         />
 
         {/* Clarification */}
+        {params.imageUri && symbolDesc ? (
+          <AnimatedPressable
+            onPress={handleGetAiSuggestion}
+            style={[styles.suggestBtn, loadingSuggestion && styles.suggestBtnDisabled]}
+            disabled={loadingSuggestion}
+            scaleValue={0.97}
+          >
+            <Text style={styles.suggestBtnText}>
+              {loadingSuggestion ? (es ? 'Analizando símbolo...' : 'Analyzing symbol...') : es ? 'Sugerencia AI desde imagen' : 'AI Suggest from Image'}
+            </Text>
+          </AnimatedPressable>
+        ) : null}
+        {aiSuggestion && (
+          <View style={styles.clarificationBox}>
+            <Text style={styles.clarificationLabel}>{es ? 'Sugerencia AI' : 'AI Suggestion'}</Text>
+            <Text style={styles.clarificationText}>{aiSuggestion}</Text>
+          </View>
+        )}
         {loadingClarification && (
           <View style={styles.clarificationBox}>
-            <Text style={styles.clarificationLoading}>Getting technical details...</Text>
+            <Text style={styles.clarificationLoading}>{es ? 'Obteniendo detalles técnicos...' : 'Getting technical details...'}</Text>
           </View>
         )}
         {clarification && !loadingClarification && (
           <View style={styles.clarificationBox}>
-            <Text style={styles.clarificationLabel}>Technical Note</Text>
+            <Text style={styles.clarificationLabel}>{es ? 'Nota técnica' : 'Technical Note'}</Text>
             <Text style={styles.clarificationText}>{clarification}</Text>
           </View>
         )}
@@ -199,7 +261,17 @@ export default function IdentifySymbolScreen() {
           scaleValue={0.97}
         >
           <Text style={styles.confirmBtnText}>
-            {saving ? 'Saving...' : confirmLabel ? `Confirm: ${confirmLabel}` : 'Select a symbol type'}
+            {saving
+              ? es
+                ? 'Guardando...'
+                : 'Saving...'
+              : confirmLabel
+              ? es
+                ? `Confirmar: ${confirmLabel}`
+                : `Confirm: ${confirmLabel}`
+              : es
+              ? 'Selecciona un tipo de símbolo'
+              : 'Select a symbol type'}
           </Text>
         </AnimatedPressable>
       </View>
@@ -248,6 +320,19 @@ const styles = StyleSheet.create({
     backgroundColor: WT.bgCard,
     borderRadius: 10,
     padding: 12,
+    borderWidth: 1,
+    borderColor: WT.border,
+  },
+  imageRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+  },
+  symbolThumb: {
+    width: 80,
+    height: 80,
+    borderRadius: 8,
+    backgroundColor: WT.bgCardAlt,
     borderWidth: 1,
     borderColor: WT.border,
   },
@@ -316,6 +401,22 @@ const styles = StyleSheet.create({
   },
   customInputFilled: {
     borderColor: WT.blue,
+  },
+  suggestBtn: {
+    backgroundColor: WT.bgCardAlt,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: WT.border,
+    paddingVertical: 10,
+    alignItems: 'center',
+  },
+  suggestBtnDisabled: {
+    opacity: 0.6,
+  },
+  suggestBtnText: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: WT.textPrimary,
   },
   clarificationBox: {
     backgroundColor: WT.bgCard,

@@ -17,6 +17,13 @@ module.exports = {
       jsx: true
     }
   },
+  settings: {
+    'import/resolver': {
+      node: {
+        extensions: ['.js', '.jsx', '.ts', '.tsx'],
+      },
+    },
+  },
   ignorePatterns: ['/dist/*', '/public/*', '/babel-plugins/*', '/backend/*'],
   env: {
     browser: true,
@@ -31,7 +38,11 @@ module.exports = {
     "@typescript-eslint/no-wrapper-object-types": "off",
     "@typescript-eslint/ban-tslint-comment": "off",
     "react/no-unescaped-entities": "off",
-    "import/no-unresolved": "error",
+    // TypeScript already validates module resolution, so these import-plugin
+    // rules are redundant in a TypeScript project and only cause false positives
+    // with path aliases like @/*.
+    "import/no-unresolved": "off",
+    "import/namespace": "off",
     "prefer-const": "off",
     "react/prop-types": 1,
     "no-case-declarations": "off",

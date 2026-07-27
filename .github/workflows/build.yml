@@ -34,8 +34,11 @@ jobs:
         with:
           node-version: 20
 
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@v2
+
       - name: Install dependencies
-        run: npm install --legacy-peer-deps
+        run: bun install
 
       - name: Create .env file with AI keys
         run: |
@@ -70,8 +73,11 @@ jobs:
         with:
           node-version: 20
 
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@v2
+
       - name: Install dependencies
-        run: npm install --legacy-peer-deps
+        run: bun install
 
       - name: Create .env file with AI keys
         run: |
@@ -107,8 +113,11 @@ jobs:
         with:
           node-version: 20
 
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@v2
+
       - name: Install dependencies
-        run: npm install --legacy-peer-deps
+        run: bun install
 
       - name: Create .env file with AI keys
         run: |

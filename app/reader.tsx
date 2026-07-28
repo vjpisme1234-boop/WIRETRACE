@@ -498,7 +498,7 @@ export default function ReaderScreen() {
   const counterText = `${currentIndex + 1} of ${steps.length}`;
   const isLightMode = uiPrefs.visualMode === 'normalLight';
   const isHighContrast = uiPrefs.visualMode === 'highContrast';
-  const isDetailedSymbols = uiPrefs.visualMode === 'detailedSymbols';
+  const isDark = uiPrefs.visualMode === 'dark';
   const isResidentialLayout = uiPrefs.layoutPreset === 'residential';
   const isCommercialLayout = uiPrefs.layoutPreset === 'commercial';
 
@@ -509,7 +509,7 @@ export default function ReaderScreen() {
           styles.root,
           isLightMode && styles.rootLight,
           isHighContrast && styles.rootHighContrast,
-          isDetailedSymbols && styles.rootSymbols,
+          isDark && styles.rootDark,
           { paddingTop: insets.top },
         ]}
       >
@@ -523,10 +523,10 @@ export default function ReaderScreen() {
           <AnimatedPressable onPress={handleBack} style={styles.backBtn} scaleValue={0.9}>
             <ArrowLeft
               size={22}
-              color={isLightMode ? stylesColors.lightSecondary : isDetailedSymbols ? stylesColors.symbolsSecondary : WT.textSecondary}
+              color={isLightMode ? stylesColors.lightSecondary : isDark ? stylesColors.darkSecondary : WT.textSecondary}
             />
           </AnimatedPressable>
-          <Text style={[styles.counterText, isLightMode && styles.counterTextLight, isDetailedSymbols && styles.counterTextSymbols]}>
+          <Text style={[styles.counterText, isLightMode && styles.counterTextLight, isDark && styles.counterTextDark]}>
             {counterText}
           </Text>
           <AnimatedPressable onPress={handleToggleVoiceNext} style={styles.autoBtn} scaleValue={0.9}>
@@ -535,7 +535,7 @@ export default function ReaderScreen() {
             ) : (
               <MicOff
                 size={20}
-                color={isLightMode ? stylesColors.lightSecondary : isDetailedSymbols ? stylesColors.symbolsSecondary : WT.textSecondary}
+                color={isLightMode ? stylesColors.lightSecondary : isDark ? stylesColors.darkSecondary : WT.textSecondary}
               />
             )}
           </AnimatedPressable>
@@ -548,9 +548,9 @@ export default function ReaderScreen() {
             { opacity: contentOpacity, transform: [{ translateY: contentTranslate }] },
           ]}
         >
-          <View style={[styles.modeBadge, isLightMode && styles.modeBadgeLight, isHighContrast && styles.modeBadgeHighContrast, isDetailedSymbols && styles.modeBadgeSymbols]}>
-            <Text style={[styles.modeBadgeText, isLightMode && styles.modeBadgeTextLight, isHighContrast && styles.modeBadgeTextHighContrast, isDetailedSymbols && styles.modeBadgeTextSymbols]}>
-              {uiPrefs.layoutPreset.toUpperCase()} • {uiPrefs.visualMode === 'normalLight' ? 'NORMAL LIGHT' : uiPrefs.visualMode === 'highContrast' ? 'HIGH CONTRAST' : 'DETAILED SYMBOLS'}
+          <View style={[styles.modeBadge, isLightMode && styles.modeBadgeLight, isHighContrast && styles.modeBadgeHighContrast, isDark && styles.modeBadgeDark]}>
+            <Text style={[styles.modeBadgeText, isLightMode && styles.modeBadgeTextLight, isHighContrast && styles.modeBadgeTextHighContrast, isDark && styles.modeBadgeTextDark]}>
+              {uiPrefs.layoutPreset.toUpperCase()} • {uiPrefs.visualMode === 'normalLight' ? 'NORMAL LIGHT' : uiPrefs.visualMode === 'highContrast' ? 'HIGH CONTRAST' : 'DARK'}
             </Text>
           </View>
           {step.wireLabel && (
@@ -559,41 +559,41 @@ export default function ReaderScreen() {
                 styles.wireLabel,
                 isLightMode && styles.wireLabelLight,
                 isHighContrast && styles.textHighContrast,
-                isDetailedSymbols && styles.wireLabelSymbols,
+                isDark && styles.wireLabelDark,
                 stepWireColor ? { color: stepWireColor } : null,
               ]}
             >
               {step.wireLabel}
             </Text>
           )}
-          <Text style={[styles.instruction, isLightMode && styles.instructionLight, isHighContrast && styles.instructionHighContrast, isDetailedSymbols && styles.instructionSymbols]}>
+          <Text style={[styles.instruction, isLightMode && styles.instructionLight, isHighContrast && styles.instructionHighContrast, isDark && styles.instructionDark]}>
             {step.instruction}
           </Text>
           {step.componentLabel && !isResidentialLayout && (
-            <View style={[styles.componentBadge, isLightMode && styles.componentBadgeLight, isDetailedSymbols && styles.componentBadgeSymbols]}>
-              <Text style={[styles.componentBadgeText, isLightMode && styles.componentBadgeTextLight, isDetailedSymbols && styles.componentBadgeTextSymbols]}>
+            <View style={[styles.componentBadge, isLightMode && styles.componentBadgeLight, isDark && styles.componentBadgeDark]}>
+              <Text style={[styles.componentBadgeText, isLightMode && styles.componentBadgeTextLight, isDark && styles.componentBadgeTextDark]}>
                 {step.componentLabel}
               </Text>
             </View>
           )}
           {(step.detail && !isResidentialLayout) && (
-            <Text style={[styles.detail, isLightMode && styles.detailLight, isDetailedSymbols && styles.detailSymbols]}>{step.detail}</Text>
+            <Text style={[styles.detail, isLightMode && styles.detailLight, isDark && styles.detailDark]}>{step.detail}</Text>
           )}
-          {step.specialInstruction && (isCommercialLayout || isDetailedSymbols) && (
-            <View style={[styles.specialBox, isLightMode && styles.specialBoxLight, isDetailedSymbols && styles.specialBoxSymbols]}>
-              <Text style={[styles.specialLabel, isDetailedSymbols && styles.specialLabelSymbols]}>
+          {step.specialInstruction && (isCommercialLayout || isDark) && (
+            <View style={[styles.specialBox, isLightMode && styles.specialBoxLight, isDark && styles.specialBoxDark]}>
+              <Text style={[styles.specialLabel, isDark && styles.specialLabelDark]}>
                 {speechLanguage === 'spanish' ? 'Instrucción especial' : 'Special Instruction'}
               </Text>
-              <Text style={[styles.specialText, isLightMode && styles.specialTextLight, isDetailedSymbols && styles.specialTextSymbols]}>
+              <Text style={[styles.specialText, isLightMode && styles.specialTextLight, isDark && styles.specialTextDark]}>
                 {step.specialInstruction}
               </Text>
             </View>
           )}
-          <View style={[styles.voiceStatusBox, isLightMode && styles.voiceStatusBoxLight, isDetailedSymbols && styles.voiceStatusBoxSymbols]}>
-            <Text style={[styles.voiceStatusLabel, isDetailedSymbols && styles.voiceStatusLabelSymbols]}>
+          <View style={[styles.voiceStatusBox, isLightMode && styles.voiceStatusBoxLight, isDark && styles.voiceStatusBoxDark]}>
+            <Text style={[styles.voiceStatusLabel, isDark && styles.voiceStatusLabelDark]}>
               {voiceNextEnabled ? (listeningForVoice ? 'VOICE READY' : 'VOICE WAIT') : 'VOICE OFF'}
             </Text>
-            <Text style={[styles.voiceStatusText, isLightMode && styles.voiceStatusTextLight, isDetailedSymbols && styles.voiceStatusTextSymbols]}>{voiceStatus}</Text>
+            <Text style={[styles.voiceStatusText, isLightMode && styles.voiceStatusTextLight, isDark && styles.voiceStatusTextDark]}>{voiceStatus}</Text>
             {voiceError ? <Text style={styles.voiceErrorText}>{voiceError}</Text> : null}
           </View>
         </Animated.View>
@@ -655,7 +655,7 @@ export default function ReaderScreen() {
 
 const stylesColors = {
   lightSecondary: '#4B5563',
-  symbolsSecondary: '#80EEFF',
+  darkSecondary: '#80EEFF',
 } as const;
 
 const styles = StyleSheet.create({
@@ -669,7 +669,7 @@ const styles = StyleSheet.create({
   rootHighContrast: {
     backgroundColor: '#000000',
   },
-  rootSymbols: {
+  rootDark: {
     backgroundColor: '#061A22',
   },
   centered: {
@@ -711,7 +711,7 @@ const styles = StyleSheet.create({
   counterTextLight: {
     color: '#4B5563',
   },
-  counterTextSymbols: {
+  counterTextDark: {
     color: '#80EEFF',
   },
   autoBtn: {
@@ -743,7 +743,7 @@ const styles = StyleSheet.create({
     borderColor: WT.yellow,
     backgroundColor: 'rgba(255,214,10,0.18)',
   },
-  modeBadgeSymbols: {
+  modeBadgeDark: {
     borderColor: '#00E5FF',
     backgroundColor: 'rgba(0,229,255,0.18)',
   },
@@ -759,7 +759,7 @@ const styles = StyleSheet.create({
   modeBadgeTextLight: {
     color: '#334155',
   },
-  modeBadgeTextSymbols: {
+  modeBadgeTextDark: {
     color: '#80EEFF',
   },
   wireLabel: {
@@ -771,7 +771,7 @@ const styles = StyleSheet.create({
   wireLabelLight: {
     color: '#0B66B8',
   },
-  wireLabelSymbols: {
+  wireLabelDark: {
     color: '#00E5FF',
     textShadowColor: 'rgba(0, 229, 255, 0.35)',
     textShadowRadius: 4,
@@ -795,7 +795,7 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     color: '#FFFFFF',
   },
-  instructionSymbols: {
+  instructionDark: {
     color: '#D6F8FF',
     fontWeight: '700',
     fontSize: 24,
@@ -814,7 +814,7 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(11,102,184,0.1)',
     borderColor: 'rgba(11,102,184,0.24)',
   },
-  componentBadgeSymbols: {
+  componentBadgeDark: {
     backgroundColor: 'rgba(0,229,255,0.14)',
     borderColor: 'rgba(0,229,255,0.35)',
   },
@@ -826,7 +826,7 @@ const styles = StyleSheet.create({
   componentBadgeTextLight: {
     color: '#0B66B8',
   },
-  componentBadgeTextSymbols: {
+  componentBadgeTextDark: {
     color: '#00E5FF',
   },
   detail: {
@@ -837,7 +837,7 @@ const styles = StyleSheet.create({
   detailLight: {
     color: '#334155',
   },
-  detailSymbols: {
+  detailDark: {
     color: '#A3EDFF',
   },
   specialBox: {
@@ -852,7 +852,7 @@ const styles = StyleSheet.create({
     backgroundColor: '#EAF3FF',
     borderLeftColor: '#0B66B8',
   },
-  specialBoxSymbols: {
+  specialBoxDark: {
     backgroundColor: '#0D2A35',
     borderLeftColor: '#00E5FF',
   },
@@ -869,13 +869,13 @@ const styles = StyleSheet.create({
     fontStyle: 'italic',
     lineHeight: 20,
   },
-  specialLabelSymbols: {
+  specialLabelDark: {
     color: '#00E5FF',
   },
   specialTextLight: {
     color: '#334155',
   },
-  specialTextSymbols: {
+  specialTextDark: {
     color: '#C3F6FF',
   },
   voiceStatusBox: {
@@ -890,7 +890,7 @@ const styles = StyleSheet.create({
     backgroundColor: '#EAF1FA',
     borderColor: '#D3DCE8',
   },
-  voiceStatusBoxSymbols: {
+  voiceStatusBoxDark: {
     backgroundColor: '#0E2A35',
     borderColor: '#00E5FF',
   },
@@ -901,7 +901,7 @@ const styles = StyleSheet.create({
     textTransform: 'uppercase',
     letterSpacing: 0.8,
   },
-  voiceStatusLabelSymbols: {
+  voiceStatusLabelDark: {
     color: '#00E5FF',
   },
   voiceStatusText: {
@@ -912,7 +912,7 @@ const styles = StyleSheet.create({
   voiceStatusTextLight: {
     color: '#334155',
   },
-  voiceStatusTextSymbols: {
+  voiceStatusTextDark: {
     color: '#B7F4FF',
   },
   voiceErrorText: {

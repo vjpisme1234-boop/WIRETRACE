@@ -423,7 +423,7 @@ export default function SettingsScreen() {
             <Text style={styles.sectionTitle}>{es ? 'Modo Visual de la Interfaz' : 'UI Visual Mode'}</Text>
           </View>
           <SegmentControl
-            options={['normalLight', 'highContrast', 'detailedSymbols'] as VisualMode[]}
+            options={['normalLight', 'highContrast', 'dark'] as VisualMode[]}
             value={uiPrefs.visualMode}
             onChange={(v) => {
               console.log('[Settings] Visual mode changed', { visualMode: v });
@@ -431,14 +431,14 @@ export default function SettingsScreen() {
             }}
             labels={
               es
-                ? { normalLight: 'Claro', highContrast: 'Resaltado', detailedSymbols: 'Símbolos' }
-                : { normalLight: 'Light', highContrast: 'Highlight', detailedSymbols: 'Symbols' }
+                ? { normalLight: 'Claro', highContrast: 'Resaltado', dark: 'Oscuro' }
+                : { normalLight: 'Light', highContrast: 'Highlight', dark: 'Dark' }
             }
           />
           <Text style={styles.fieldHint}>
             {es
-              ? 'Elige un modo visual para mejorar la legibilidad y el detalle de símbolos.'
-              : 'Choose a visual mode for readability and symbol detail emphasis.'}
+              ? 'Elige un modo visual para mejorar la legibilidad en distintas condiciones de luz.'
+              : 'Choose a visual mode for readability in different lighting conditions.'}
           </Text>
         </View>
 

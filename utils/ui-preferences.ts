@@ -1,7 +1,7 @@
 import * as SecureStore from 'expo-secure-store';
 import { STORAGE_KEYS } from '@/constants/wiretrace';
 
-export type VisualMode = 'normalLight' | 'highContrast' | 'detailedSymbols';
+export type VisualMode = 'normalLight' | 'highContrast' | 'dark';
 export type LayoutPreset = 'industrial' | 'residential' | 'commercial';
 export type VisionProviderPreference = 'all' | 'openrouter' | 'openai' | 'groq';
 
@@ -20,11 +20,13 @@ export const DEFAULT_UI_PREFERENCES: UIPreferences = {
 const LEGACY_VISUAL_MODE_MAP: Record<string, VisualMode> = {
   light: 'normalLight',
   highlight: 'highContrast',
-  symbols: 'detailedSymbols',
+  symbols: 'dark',
+  detailedsymbols: 'dark',
+  dark: 'dark',
 };
 
 function normalizeVisualMode(value: unknown): VisualMode {
-  if (value === 'normalLight' || value === 'highContrast' || value === 'detailedSymbols') {
+  if (value === 'normalLight' || value === 'highContrast' || value === 'dark') {
     return value;
   }
   if (typeof value === 'string') {
@@ -38,14 +40,14 @@ function normalizeLayoutPreset(value: unknown): LayoutPreset {
   if (value === 'industrial' || value === 'residential' || value === 'commercial') {
     return value;
   }
-
-  function normalizeVisionProvider(value: unknown): VisionProviderPreference {
-    if (value === 'all' || value === 'openrouter' || value === 'openai' || value === 'groq') {
-      return value;
-    }
-    return DEFAULT_UI_PREFERENCES.visionProvider;
-  }
   return DEFAULT_UI_PREFERENCES.layoutPreset;
+}
+
+function normalizeVisionProvider(value: unknown): VisionProviderPreference {
+  if (value === 'all' || value === 'openrouter' || value === 'openai' || value === 'groq') {
+    return value;
+  }
+  return DEFAULT_UI_PREFERENCES.visionProvider;
 }
 
 export async function loadUIPreferences(): Promise<UIPreferences> {

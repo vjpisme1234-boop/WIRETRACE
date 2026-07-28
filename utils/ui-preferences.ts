@@ -3,7 +3,7 @@ import { STORAGE_KEYS } from '@/constants/wiretrace';
 
 export type VisualMode = 'normalLight' | 'highContrast' | 'dark';
 export type LayoutPreset = 'industrial' | 'residential' | 'commercial';
-export type VisionProviderPreference = 'all' | 'openrouter' | 'openai' | 'groq';
+export type VisionProviderPreference = 'all' | 'openrouter' | 'anthropic' | 'openai' | 'groq';
 
 export interface UIPreferences {
   visualMode: VisualMode;
@@ -44,7 +44,7 @@ function normalizeLayoutPreset(value: unknown): LayoutPreset {
 }
 
 function normalizeVisionProvider(value: unknown): VisionProviderPreference {
-  if (value === 'all' || value === 'openrouter' || value === 'openai' || value === 'groq') {
+  if (value === 'all' || value === 'openrouter' || value === 'anthropic' || value === 'openai' || value === 'groq') {
     return value;
   }
   return DEFAULT_UI_PREFERENCES.visionProvider;

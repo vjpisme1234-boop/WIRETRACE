@@ -108,11 +108,12 @@ export default function SettingsScreen() {
   const insets = useSafeAreaInsets();
   const [apiKey, setApiKey] = useState('');
   const [openAIApiKey, setOpenAIApiKey] = useState('');
-  const [groqApiKey, setGroqApiKey] = useState('');
+  const [anthropicApiKey, setAnthropicApiKey] = useState('');
   const [settings, setSettings] = useState<TTSSettings>({
     speed: 'normal',
     voice: 'default',
     autoAdvanceDelay: 'off',
+    language: 'english',
   });
   const [uiPrefs, setUiPrefs] = useState<UIPreferences>(DEFAULT_UI_PREFERENCES);
   const [saved, setSaved] = useState(false);
@@ -121,16 +122,16 @@ export default function SettingsScreen() {
   useEffect(() => {
     const load = async () => {
       console.log('[Settings] Loading settings');
-      const [storedKey, storedOpenAIKey, storedGroqKey, ttsSettings, storedUiPrefs] = await Promise.all([
+      const [storedKey, storedOpenAIKey, storedAnthropicKey, ttsSettings, storedUiPrefs] = await Promise.all([
         SecureStore.getItemAsync(STORAGE_KEYS.API_KEY),
         SecureStore.getItemAsync(STORAGE_KEYS.OPENAI_API_KEY),
-        SecureStore.getItemAsync(STORAGE_KEYS.GROQ_API_KEY),
+        SecureStore.getItemAsync(STORAGE_KEYS.ANTHROPIC_API_KEY),
         loadTTSSettings(),
         loadUIPreferences(),
       ]);
       if (storedKey) setApiKey(storedKey);
       if (storedOpenAIKey) setOpenAIApiKey(storedOpenAIKey);
-      if (storedGroqKey) setGroqApiKey(storedGroqKey);
+      if (storedAnthropicKey) setAnthropicApiKey(storedAnthropicKey);
       setSettings(ttsSettings);
       setUiPrefs(storedUiPrefs);
     };
@@ -142,7 +143,7 @@ export default function SettingsScreen() {
     try {
       const openRouterKey = apiKey.trim();
       const openAIKey = openAIApiKey.trim();
-      const groqKey = groqApiKey.trim();
+      const anthropicKey = anthropicApiKey.trim();
       await Promise.all([
         openRouterKey
           ? SecureStore.setItemAsync(STORAGE_KEYS.API_KEY, openRouterKey)
@@ -150,9 +151,9 @@ export default function SettingsScreen() {
         openAIKey
           ? SecureStore.setItemAsync(STORAGE_KEYS.OPENAI_API_KEY, openAIKey)
           : SecureStore.deleteItemAsync(STORAGE_KEYS.OPENAI_API_KEY),
-        groqKey
-          ? SecureStore.setItemAsync(STORAGE_KEYS.GROQ_API_KEY, groqKey)
-          : SecureStore.deleteItemAsync(STORAGE_KEYS.GROQ_API_KEY),
+        anthropicKey
+          ? SecureStore.setItemAsync(STORAGE_KEYS.ANTHROPIC_API_KEY, anthropicKey)
+          : SecureStore.deleteItemAsync(STORAGE_KEYS.ANTHROPIC_API_KEY),
         saveTTSSettings(settings),
         saveUIPreferences(uiPrefs),
       ]);
@@ -217,7 +218,17 @@ export default function SettingsScreen() {
         contentContainerStyle={[styles.scrollContent, { paddingBottom: insets.bottom + 40 }]}
         showsVerticalScrollIndicator={false}
       >
-        {/* API Key */}
+        {/* Free AI banner */}
+        <View style={styles.freeAiBanner}>
+          <Zap size={18} color={WT.green} fill={WT.green} />
+          <Text style={styles.freeAiBannerText}>
+            {es
+              ? 'WireTrace AI funciona de inmediato con una AI gratuita integrada (Groq). Agrega tus propias claves abajo para usar una AI de mayor calidad.'
+              : 'WireTrace AI works out of the box with a free built-in AI (Groq). Add your own keys below to use a higher-quality AI.'}
+          </Text>
+        </View>
+
+        {/* OpenRouter API Key */}
         <View style={styles.section}>
           <View style={styles.sectionHeader}>
             <Key size={16} color={WT.blue} />
@@ -239,7 +250,14 @@ export default function SettingsScreen() {
             multiline={false}
           />
           <Text style={styles.fieldHint}>
-            {es ? 'Se usa para el análisis de esquemas con AI. Obtén tu clave en openrouter.ai' : 'Used for AI schematic analysis. Get your key at openrouter.ai'}
+            {es
+              ? 'Acceso flexible a Gemini, Claude, GPT y más con una sola clave. Pago por uso.'
+              : 'Flexible access to Gemini, Claude, GPT, and more through one key. Pay-as-you-go.'}
+          </Text>
+          <Text style={styles.fieldHint}>
+            {es
+              ? '1) Ve a openrouter.ai y crea una cuenta.  2) Ve a Settings → API Keys y crea una nueva clave.  3) Agrega crédito en Settings → Credits.  4) Pega la clave arriba y toca Guardar.'
+              : '1) Go to openrouter.ai and create an account.  2) Go to Settings → API Keys and create a new key.  3) Add credit under Settings → Credits.  4) Paste the key above and tap Save.'}
           </Text>
         </View>
 
@@ -265,25 +283,32 @@ export default function SettingsScreen() {
             multiline={false}
           />
           <Text style={styles.fieldHint}>
-            {es ? 'Se usa para llamadas de visión de OpenAI. Se guarda localmente en este dispositivo.' : 'Used for OpenAI vision calls. Stored locally on this device.'}
+            {es
+              ? 'GPT-4o: muy confiable extrayendo datos estructurados de fotos de esquemas.'
+              : 'GPT-4o: very reliable at extracting structured data from schematic photos.'}
+          </Text>
+          <Text style={styles.fieldHint}>
+            {es
+              ? '1) Ve a platform.openai.com y crea una cuenta.  2) Ve a Settings → Billing y agrega un método de pago.  3) Ve a API Keys y crea una nueva clave.  4) Pega la clave arriba y toca Guardar.'
+              : '1) Go to platform.openai.com and create an account.  2) Go to Settings → Billing and add a payment method.  3) Go to API Keys and create a new key.  4) Paste the key above and tap Save.'}
           </Text>
         </View>
 
-        {/* Groq API Key */}
+        {/* Anthropic API Key */}
         <View style={styles.section}>
           <View style={styles.sectionHeader}>
             <Key size={16} color={WT.blue} />
-            <Text style={styles.sectionTitle}>{es ? 'Clave API de Groq' : 'Groq API Key'}</Text>
+            <Text style={styles.sectionTitle}>{es ? 'Clave API de Anthropic (Claude)' : 'Anthropic (Claude) API Key'}</Text>
           </View>
           <Text style={styles.fieldLabel}>{es ? 'Clave API' : 'API Key'}</Text>
           <TextInput
             style={styles.apiKeyInput}
-            value={groqApiKey}
+            value={anthropicApiKey}
             onChangeText={(t) => {
-              console.log('[Settings] Groq API key changed');
-              setGroqApiKey(t);
+              console.log('[Settings] Anthropic API key changed');
+              setAnthropicApiKey(t);
             }}
-            placeholder="gsk_..."
+            placeholder="sk-ant-..."
             placeholderTextColor={WT.textTertiary}
             autoCapitalize="none"
             autoCorrect={false}
@@ -291,7 +316,14 @@ export default function SettingsScreen() {
             multiline={false}
           />
           <Text style={styles.fieldHint}>
-            {es ? 'Se usa para llamadas de visión de Groq. Se guarda localmente en este dispositivo.' : 'Used for Groq vision calls. Stored locally on this device.'}
+            {es
+              ? 'Claude: a menudo la más precisa siguiendo instrucciones detalladas al leer esquemas.'
+              : "Claude: often the most accurate at following detailed instructions when reading schematics."}
+          </Text>
+          <Text style={styles.fieldHint}>
+            {es
+              ? '1) Ve a console.anthropic.com y crea una cuenta.  2) Ve a Billing y agrega crédito.  3) Ve a API Keys y crea una nueva clave.  4) Pega la clave arriba y toca Guardar.'
+              : '1) Go to console.anthropic.com and create an account.  2) Go to Billing and add credit.  3) Go to API Keys and create a new key.  4) Paste the key above and tap Save.'}
           </Text>
         </View>
 
@@ -448,7 +480,7 @@ export default function SettingsScreen() {
             <Text style={styles.sectionTitle}>{es ? 'Proveedor de Visión AI' : 'AI Vision Provider'}</Text>
           </View>
           <SegmentControl
-            options={['all', 'openrouter', 'openai', 'groq'] as VisionProviderPreference[]}
+            options={['all', 'openrouter', 'anthropic', 'openai', 'groq'] as VisionProviderPreference[]}
             value={uiPrefs.visionProvider}
             onChange={(v) => {
               console.log('[Settings] Vision provider preference changed', { visionProvider: v });
@@ -456,14 +488,14 @@ export default function SettingsScreen() {
             }}
             labels={
               es
-                ? { all: 'Los 3 (Auto)', openrouter: 'OpenRouter', openai: 'OpenAI', groq: 'Groq' }
-                : { all: 'All 3 (Auto)', openrouter: 'OpenRouter', openai: 'OpenAI', groq: 'Groq' }
+                ? { all: 'Auto', openrouter: 'OpenRouter', anthropic: 'Claude', openai: 'OpenAI', groq: 'Groq (gratis)' }
+                : { all: 'Auto', openrouter: 'OpenRouter', anthropic: 'Claude', openai: 'OpenAI', groq: 'Groq (free)' }
             }
           />
           <Text style={styles.fieldHint}>
             {es
-              ? 'Los 3 usa respaldo automático. Un solo proveedor fuerza solo esa AI.'
-              : 'All 3 uses automatic fallback. Single provider forces only that AI.'}
+              ? 'Auto usa tus claves pagadas primero y Groq gratis como respaldo. Un solo proveedor fuerza solo esa AI.'
+              : 'Auto uses your paid keys first and free Groq as a fallback. Single provider forces only that AI.'}
           </Text>
         </View>
 
@@ -561,6 +593,22 @@ const styles = StyleSheet.create({
   scrollContent: {
     padding: 20,
     gap: 20,
+  },
+  freeAiBanner: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 10,
+    backgroundColor: WT.greenMuted,
+    borderRadius: 12,
+    padding: 14,
+    borderWidth: 1,
+    borderColor: 'rgba(52,199,89,0.25)',
+  },
+  freeAiBannerText: {
+    flex: 1,
+    fontSize: 13,
+    color: WT.textPrimary,
+    lineHeight: 19,
   },
   section: {
     gap: 10,

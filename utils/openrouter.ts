@@ -3,8 +3,15 @@ import { OPENROUTER_BASE_URL, OPENROUTER_MODEL, STORAGE_KEYS } from '@/constants
 import type { ReadingStep } from '@/utils/schematic-storage';
 import { loadUIPreferences } from '@/utils/ui-preferences';
 
-const OPENAI_VISION_MODEL = process.env.EXPO_PUBLIC_OPENAI_MODEL || 'gpt-4o-mini';
-const GROQ_VISION_MODEL = process.env.EXPO_PUBLIC_GROQ_MODEL || 'llama-3.2-11b-vision-preview';
+const OPENAI_MODEL = process.env.EXPO_PUBLIC_OPENAI_MODEL || 'gpt-4o-mini';
+const GROQ_MODEL = process.env.EXPO_PUBLIC_GROQ_MODEL || 'llama-3.2-11b-vision-preview';
+const ANTHROPIC_MODEL = process.env.EXPO_PUBLIC_ANTHROPIC_MODEL || 'claude-sonnet-4-5-20250929';
+
+// Baked-in free Groq key so the app works immediately after install with no
+// setup. Set at build time via the EXPO_PUBLIC_GROQ_DEFAULT_KEY env var
+// (EAS secret for production builds, .env for local dev) — never hardcode a
+// real key directly in this file, it ships in the compiled bundle.
+const DEFAULT_GROQ_KEY = (process.env.EXPO_PUBLIC_GROQ_DEFAULT_KEY || '').trim();
 
 async function getApiKey(): Promise<string> {
   const stored = await SecureStore.getItemAsync(STORAGE_KEYS.API_KEY);
@@ -16,9 +23,14 @@ async function getOpenAIKey(): Promise<string> {
   return stored ? stored.trim() : '';
 }
 
+async function getAnthropicKey(): Promise<string> {
+  const stored = await SecureStore.getItemAsync(STORAGE_KEYS.ANTHROPIC_API_KEY);
+  return stored ? stored.trim() : '';
+}
+
 async function getGroqKey(): Promise<string> {
   const stored = await SecureStore.getItemAsync(STORAGE_KEYS.GROQ_API_KEY);
-  return stored ? stored.trim() : '';
+  return stored ? stored.trim() : DEFAULT_GROQ_KEY;
 }
 
 function validateOpenRouterKeyFormat(apiKey: string): void {
@@ -29,192 +41,266 @@ function validateOpenRouterKeyFormat(apiKey: string): void {
   }
 }
 
-interface OpenRouterMessage {
+interface ChatMessage {
   role: 'system' | 'user' | 'assistant';
   content: string | { type: string; text?: string; image_url?: { url: string } }[];
 }
 
-async function callOpenRouter(messages: OpenRouterMessage[], maxTokens = 4096): Promise<string> {
-  const apiKey = await getApiKey();
+async function callOpenAICompatible(opts: {
+  provider: string;
+  url: string;
+  apiKey: string;
+  model: string;
+  messages: ChatMessage[];
+  maxTokens: number;
+  extraHeaders?: Record<string, string>;
+}): Promise<string> {
+  const { provider, url, apiKey, model, messages, maxTokens, extraHeaders } = opts;
+  console.log(`[${provider}] Making API request`, { model, messageCount: messages.length });
 
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+      'Content-Type': 'application/json',
+      ...extraHeaders,
+    },
+    body: JSON.stringify({ model, messages, max_tokens: maxTokens }),
+  });
+
+  if (!response.ok) {
+    const errorText = await response.text();
+    console.error(`[${provider}] API error`, { status: response.status, body: errorText });
+    if (response.status === 401) {
+      throw new Error(`${provider} API error 401 (Unauthorized). Verify your ${provider} key in Settings.`);
+    }
+    throw new Error(`${provider} API error ${response.status}: ${errorText}`);
+  }
+
+  const data = await response.json();
+  const content = data.choices?.[0]?.message?.content;
+  if (!content) throw new Error(`No content in ${provider} response`);
+  return typeof content === 'string' ? content.trim() : String(content);
+}
+
+async function callOpenRouter(messages: ChatMessage[], maxTokens = 4096): Promise<string> {
+  const apiKey = await getApiKey();
   if (!apiKey) {
     throw new Error('No API key configured. Please add your OpenRouter API key in Settings.');
   }
   validateOpenRouterKeyFormat(apiKey);
 
-  console.log('[OpenRouter] Making API request', { model: OPENROUTER_MODEL, messageCount: messages.length });
-
-  const response = await fetch(`${OPENROUTER_BASE_URL}/chat/completions`, {
-    method: 'POST',
-    headers: {
-      Authorization: `Bearer ${apiKey}`,
-      'Content-Type': 'application/json',
-      'HTTP-Referer': 'https://wiretrace.ai',
-      'X-Title': 'WireTrace AI',
-    },
-    body: JSON.stringify({
-      model: OPENROUTER_MODEL,
-      messages,
-      max_tokens: maxTokens,
-    }),
+  return callOpenAICompatible({
+    provider: 'OpenRouter',
+    url: `${OPENROUTER_BASE_URL}/chat/completions`,
+    apiKey,
+    model: OPENROUTER_MODEL,
+    messages,
+    maxTokens,
+    extraHeaders: { 'HTTP-Referer': 'https://wiretrace.ai', 'X-Title': 'WireTrace AI' },
   });
-
-  if (!response.ok) {
-    const errorText = await response.text();
-    console.error('[OpenRouter] API error', { status: response.status, body: errorText });
-    if (response.status === 401) {
-      throw new Error(
-        'OpenRouter API error 401 (Unauthorized). Verify your OpenRouter key in Settings and ensure your request includes Authorization: Bearer <key>, HTTP-Referer, and X-Title headers.'
-      );
-    }
-    throw new Error(`OpenRouter API error ${response.status}: ${errorText}`);
-  }
-
-  const data = await response.json();
-  console.log('[OpenRouter] API response received', { usage: data.usage });
-  const content = data.choices?.[0]?.message?.content;
-  if (!content) throw new Error('No content in OpenRouter response');
-  return content;
 }
 
-async function callOpenAIVision(imageUrl: string, prompt: string): Promise<string> {
+async function callOpenAI(messages: ChatMessage[], maxTokens = 2048): Promise<string> {
   const apiKey = await getOpenAIKey();
-  if (!apiKey) {
-    throw new Error('OpenAI key is not configured.');
-  }
-
-  const response = await fetch('https://api.openai.com/v1/chat/completions', {
-    method: 'POST',
-    headers: {
-      Authorization: `Bearer ${apiKey}`,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({
-      model: OPENAI_VISION_MODEL,
-      messages: [
-        {
-          role: 'user',
-          content: [
-            { type: 'text', text: prompt },
-            { type: 'image_url', image_url: { url: imageUrl } },
-          ],
-        },
-      ],
-      max_tokens: 2048,
-    }),
+  if (!apiKey) throw new Error('OpenAI key is not configured.');
+  return callOpenAICompatible({
+    provider: 'OpenAI',
+    url: 'https://api.openai.com/v1/chat/completions',
+    apiKey,
+    model: OPENAI_MODEL,
+    messages,
+    maxTokens,
   });
-
-  if (!response.ok) {
-    const errorText = await response.text();
-    throw new Error(`OpenAI API error ${response.status}: ${errorText}`);
-  }
-
-  const data = await response.json();
-  const content = data.choices?.[0]?.message?.content;
-  if (!content) {
-    throw new Error('No content in OpenAI vision response');
-  }
-  return typeof content === 'string' ? content.trim() : String(content);
 }
 
-async function callGroqVision(imageUrl: string, prompt: string): Promise<string> {
+async function callGroq(messages: ChatMessage[], maxTokens = 2048): Promise<string> {
   const apiKey = await getGroqKey();
-  if (!apiKey) {
-    throw new Error('Groq key is not configured.');
-  }
+  if (!apiKey) throw new Error('Groq key is not configured.');
+  return callOpenAICompatible({
+    provider: 'Groq',
+    url: 'https://api.groq.com/openai/v1/chat/completions',
+    apiKey,
+    model: GROQ_MODEL,
+    messages,
+    maxTokens,
+  });
+}
 
-  const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+function toAnthropicContent(content: ChatMessage['content']): any {
+  if (typeof content === 'string') return content;
+  return content.map((part) => {
+    if (part.type === 'text') return { type: 'text', text: part.text ?? '' };
+    if (part.type === 'image_url' && part.image_url?.url) {
+      const match = /^data:(image\/[a-zA-Z]+);base64,(.+)$/.exec(part.image_url.url);
+      if (match) {
+        return { type: 'image', source: { type: 'base64', media_type: match[1], data: match[2] } };
+      }
+    }
+    return { type: 'text', text: '' };
+  });
+}
+
+async function callAnthropic(messages: ChatMessage[], maxTokens = 2048): Promise<string> {
+  const apiKey = await getAnthropicKey();
+  if (!apiKey) throw new Error('Anthropic key is not configured.');
+
+  const systemMessage = messages.find((m) => m.role === 'system');
+  const conversation = messages
+    .filter((m) => m.role !== 'system')
+    .map((m) => ({ role: m.role, content: toAnthropicContent(m.content) }));
+
+  console.log('[Anthropic] Making API request', { model: ANTHROPIC_MODEL, messageCount: conversation.length });
+
+  const response = await fetch('https://api.anthropic.com/v1/messages', {
     method: 'POST',
     headers: {
-      Authorization: `Bearer ${apiKey}`,
-      'Content-Type': 'application/json',
+      'x-api-key': apiKey,
+      'anthropic-version': '2023-06-01',
+      'content-type': 'application/json',
     },
     body: JSON.stringify({
-      model: GROQ_VISION_MODEL,
-      messages: [
-        {
-          role: 'user',
-          content: [
-            { type: 'text', text: prompt },
-            { type: 'image_url', image_url: { url: imageUrl } },
-          ],
-        },
-      ],
-      max_tokens: 2048,
+      model: ANTHROPIC_MODEL,
+      max_tokens: maxTokens,
+      ...(systemMessage ? { system: systemMessage.content } : {}),
+      messages: conversation,
     }),
   });
 
   if (!response.ok) {
     const errorText = await response.text();
-    throw new Error(`Groq API error ${response.status}: ${errorText}`);
+    console.error('[Anthropic] API error', { status: response.status, body: errorText });
+    if (response.status === 401) {
+      throw new Error('Anthropic API error 401 (Unauthorized). Verify your Anthropic key in Settings.');
+    }
+    throw new Error(`Anthropic API error ${response.status}: ${errorText}`);
   }
 
   const data = await response.json();
-  const content = data.choices?.[0]?.message?.content;
-  if (!content) {
-    throw new Error('No content in Groq vision response');
-  }
-  return typeof content === 'string' ? content.trim() : String(content);
+  const content = data.content?.[0]?.text;
+  if (!content) throw new Error('No content in Anthropic response');
+  return content.trim();
 }
 
-async function callVisionWithFallback(imageUrl: string, prompt: string): Promise<string> {
-  const openRouterKey = await getApiKey();
-  const openAIKey = await getOpenAIKey();
-  const groqKey = await getGroqKey();
-  const uiPrefs = await loadUIPreferences();
-  const selectedProvider = uiPrefs.visionProvider;
+function visionMessages(imageUrl: string, prompt: string, systemPrompt?: string): ChatMessage[] {
+  const userMessage: ChatMessage = {
+    role: 'user',
+    content: [
+      { type: 'text', text: prompt },
+      { type: 'image_url', image_url: { url: imageUrl } },
+    ],
+  };
+  return systemPrompt ? [{ role: 'system', content: systemPrompt }, userMessage] : [userMessage];
+}
 
-  const attempts: { name: string; run: () => Promise<string> }[] = [];
-  const allowOpenRouter = selectedProvider === 'all' || selectedProvider === 'openrouter';
-  const allowOpenAI = selectedProvider === 'all' || selectedProvider === 'openai';
-  const allowGroq = selectedProvider === 'all' || selectedProvider === 'groq';
+type ProviderName = 'openrouter' | 'anthropic' | 'openai' | 'groq';
 
-  if (allowOpenRouter && openRouterKey) {
-    attempts.push({
-      name: 'openrouter',
-      run: () =>
-        callOpenRouter(
-          [
-            {
-              role: 'user',
-              content: [
-                { type: 'text', text: prompt },
-                { type: 'image_url', image_url: { url: imageUrl } },
-              ],
-            },
-          ],
-          4096
-        ),
-    });
-  }
-  if (allowOpenAI && openAIKey) {
-    attempts.push({ name: 'openai', run: () => callOpenAIVision(imageUrl, prompt) });
-  }
-  if (allowGroq && groqKey) {
-    attempts.push({ name: 'groq', run: () => callGroqVision(imageUrl, prompt) });
-  }
+async function buildProviderAttempts(
+  selectedProvider: string,
+  run: (provider: ProviderName) => Promise<string>
+): Promise<{ name: ProviderName; run: () => Promise<string> }[]> {
+  const [openRouterKey, anthropicKey, openAIKey, groqKey] = await Promise.all([
+    getApiKey(),
+    getAnthropicKey(),
+    getOpenAIKey(),
+    getGroqKey(),
+  ]);
+
+  const candidates: { name: ProviderName; key: string }[] = [
+    { name: 'openrouter', key: openRouterKey },
+    { name: 'anthropic', key: anthropicKey },
+    { name: 'openai', key: openAIKey },
+    { name: 'groq', key: groqKey },
+  ];
+
+  return candidates
+    .filter((c) => (selectedProvider === 'all' || selectedProvider === c.name) && c.key)
+    .map((c) => ({ name: c.name, run: () => run(c.name) }));
+}
+
+async function runWithFallback(
+  selectedProvider: string,
+  run: (provider: ProviderName) => Promise<string>,
+  noKeyHint: string
+): Promise<string> {
+  const attempts = await buildProviderAttempts(selectedProvider, run);
 
   if (attempts.length === 0) {
     throw new Error(
       selectedProvider === 'all'
-        ? 'No vision provider key configured. Add OpenRouter, OpenAI, or Groq API key in Settings.'
-        : `No API key configured for selected provider "${selectedProvider}". Add it in Settings or switch to "All 3 (Auto)".`
+        ? `No AI provider available. ${noKeyHint}`
+        : `No API key configured for selected provider "${selectedProvider}". Add it in Settings or switch to "All (Auto)".`
     );
   }
 
   const errors: string[] = [];
   for (const attempt of attempts) {
     try {
-      console.log('[Vision] Attempting provider', { provider: attempt.name });
+      console.log('[AI] Attempting provider', { provider: attempt.name });
       return await attempt.run();
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      console.error('[Vision] Provider failed', { provider: attempt.name, message });
+      console.error('[AI] Provider failed', { provider: attempt.name, message });
       errors.push(`${attempt.name}: ${message}`);
     }
   }
 
-  throw new Error(`All vision providers failed. ${errors.join(' | ')}`);
+  throw new Error(`All AI providers failed. ${errors.join(' | ')}`);
+}
+
+async function callVisionWithFallback(imageUrl: string, prompt: string, systemPrompt?: string): Promise<string> {
+  const uiPrefs = await loadUIPreferences();
+  return runWithFallback(
+    uiPrefs.visionProvider,
+    (provider) => {
+      const messages = visionMessages(imageUrl, prompt, systemPrompt);
+      if (provider === 'openrouter') return callOpenRouter(messages, 4096);
+      if (provider === 'anthropic') return callAnthropic(messages, 4096);
+      if (provider === 'openai') return callOpenAI(messages, 2048);
+      return callGroq(messages, 2048);
+    },
+    'No AI key available. Either the built-in free Groq key was not configured at build time (set EXPO_PUBLIC_GROQ_DEFAULT_KEY), or add your own OpenRouter/OpenAI/Anthropic key in Settings.'
+  );
+}
+
+function visionMessagesMulti(imageUrls: string[], prompt: string, systemPrompt: string): ChatMessage[] {
+  const userMessage: ChatMessage = {
+    role: 'user',
+    content: [
+      { type: 'text', text: prompt },
+      ...imageUrls.map((url) => ({ type: 'image_url', image_url: { url } })),
+    ],
+  };
+  return [{ role: 'system', content: systemPrompt }, userMessage];
+}
+
+async function callMultiVisionWithFallback(imageUrls: string[], prompt: string, systemPrompt: string, maxTokens: number): Promise<string> {
+  const uiPrefs = await loadUIPreferences();
+  return runWithFallback(
+    uiPrefs.visionProvider,
+    (provider) => {
+      const messages = visionMessagesMulti(imageUrls, prompt, systemPrompt);
+      if (provider === 'openrouter') return callOpenRouter(messages, maxTokens);
+      if (provider === 'anthropic') return callAnthropic(messages, maxTokens);
+      if (provider === 'openai') return callOpenAI(messages, maxTokens);
+      return callGroq(messages, maxTokens);
+    },
+    'No AI key available. Either the built-in free Groq key was not configured at build time (set EXPO_PUBLIC_GROQ_DEFAULT_KEY), or add your own OpenRouter/OpenAI/Anthropic key in Settings.'
+  );
+}
+
+async function callTextWithFallback(messages: ChatMessage[], maxTokens: number): Promise<string> {
+  const uiPrefs = await loadUIPreferences();
+  return runWithFallback(
+    uiPrefs.visionProvider,
+    (provider) => {
+      if (provider === 'openrouter') return callOpenRouter(messages, maxTokens);
+      if (provider === 'anthropic') return callAnthropic(messages, maxTokens);
+      if (provider === 'openai') return callOpenAI(messages, maxTokens);
+      return callGroq(messages, maxTokens);
+    },
+    'No AI key available. Either the built-in free Groq key was not configured at build time (set EXPO_PUBLIC_GROQ_DEFAULT_KEY), or add your own OpenRouter/OpenAI/Anthropic key in Settings.'
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -315,24 +401,10 @@ export async function analyzeSchematic(base64Image: string): Promise<AnalysisRes
 export async function analyzeMultipleImages(base64Images: string[]): Promise<AnalysisResult> {
   console.log('[OpenRouter] analyzeMultipleImages called, pageCount:', base64Images.length);
 
-  const imageContentParts = base64Images.map((b64) => ({
-    type: 'image_url' as const,
-    image_url: { url: `data:image/jpeg;base64,${b64}` },
-  }));
+  const imageUrls = base64Images.map((b64) => `data:image/jpeg;base64,${b64}`);
+  const prompt = `Analyze these ${base64Images.length} pages of an electrical schematic as a SINGLE complete document. Pages are in order. Combine all wires, components, connections, and unknown symbols from all pages into one unified JSON result. For items spanning pages, note the page in the description (e.g. "Wire 14, page 2").`;
 
-  const content = await callOpenRouter([
-    { role: 'system', content: ANALYSIS_SYSTEM_PROMPT },
-    {
-      role: 'user',
-      content: [
-        {
-          type: 'text',
-          text: `Analyze these ${base64Images.length} pages of an electrical schematic as a SINGLE complete document. Pages are in order. Combine all wires, components, connections, and unknown symbols from all pages into one unified JSON result. For items spanning pages, note the page in the description (e.g. "Wire 14, page 2").`,
-        },
-        ...imageContentParts,
-      ],
-    },
-  ], 8192);
+  const content = await callMultiVisionWithFallback(imageUrls, prompt, ANALYSIS_SYSTEM_PROMPT, 8192);
 
   const parsed = parseJsonResult<AnalysisResult>(content, 'analyzeMultipleImages');
   console.log('[OpenRouter] analyzeMultipleImages parsed', {
@@ -370,7 +442,7 @@ Return ONLY a valid JSON array — no markdown:
 Schematic analysis:
 ${JSON.stringify(analysis)}`;
 
-  const content = await callOpenRouter([
+  const content = await callTextWithFallback([
     { role: 'system', content: systemPrompt },
     { role: 'user', content: userMessage },
   ], 4096);
@@ -387,7 +459,7 @@ ${JSON.stringify(analysis)}`;
 export async function getSymbolClarification(symbolType: string): Promise<string> {
   console.log('[OpenRouter] getSymbolClarification called', { symbolType });
 
-  const content = await callOpenRouter([
+  const content = await callTextWithFallback([
     {
       role: 'user',
       content: `You are a certified electrician. Given that this electrical symbol is a "${symbolType}", provide in under 3 sentences:
@@ -428,7 +500,7 @@ export async function answerSchematicQuestion(
 ): Promise<string> {
   console.log('[OpenRouter] answerSchematicQuestion called');
 
-  const content = await callOpenRouter([
+  const content = await callTextWithFallback([
     {
       role: 'system',
       content:

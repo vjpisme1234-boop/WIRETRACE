@@ -418,13 +418,15 @@ export default function AnalyzeScreen() {
   const activeVisionProviderLabel =
     uiPrefs.visionProvider === 'openrouter'
       ? 'OpenRouter'
+      : uiPrefs.visionProvider === 'anthropic'
+      ? 'Claude'
       : uiPrefs.visionProvider === 'openai'
       ? 'OpenAI'
       : uiPrefs.visionProvider === 'groq'
       ? 'Groq'
       : es
-      ? 'Automático (OpenRouter → OpenAI → Groq)'
-      : 'Auto (OpenRouter → OpenAI → Groq)';
+      ? 'Automático (OpenRouter → Claude → OpenAI → Groq)'
+      : 'Auto (OpenRouter → Claude → OpenAI → Groq)';
   const wireDisplayLimit = uiPrefs.layoutPreset === 'residential' ? 5 : uiPrefs.layoutPreset === 'commercial' ? 10 : 8;
   const connectionDisplayLimit = uiPrefs.layoutPreset === 'residential' ? 4 : uiPrefs.layoutPreset === 'commercial' ? 8 : 6;
 

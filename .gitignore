@@ -32,7 +32,7 @@ yarn-error.*
 android/
 ios/
 
-package-lock.json
+
 yarn.lock
 # Python
 .venv/

@@ -172,6 +172,8 @@ export default function SettingsScreen() {
     setUiPrefs((prev) => ({ ...prev, ...patch }));
   };
 
+  const es = settings.language === 'spanish';
+
   const handleTestVoice = async () => {
     if (testingVoice) {
       await stopSpeech();
@@ -200,12 +202,12 @@ export default function SettingsScreen() {
         }} style={styles.backBtn} scaleValue={0.9}>
           <ArrowLeft size={22} color={WT.blue} />
         </AnimatedPressable>
-        <Text style={styles.headerTitle}>Settings</Text>
+        <Text style={styles.headerTitle}>{es ? 'Ajustes' : 'Settings'}</Text>
         <AnimatedPressable onPress={handleSave} style={styles.saveBtn} scaleValue={0.9}>
           {saved ? (
             <CheckCircle size={20} color={WT.green} />
           ) : (
-            <Text style={styles.saveBtnText}>Save</Text>
+            <Text style={styles.saveBtnText}>{es ? 'Guardar' : 'Save'}</Text>
           )}
         </AnimatedPressable>
       </View>
@@ -219,9 +221,9 @@ export default function SettingsScreen() {
         <View style={styles.section}>
           <View style={styles.sectionHeader}>
             <Key size={16} color={WT.blue} />
-            <Text style={styles.sectionTitle}>OpenRouter API Key</Text>
+            <Text style={styles.sectionTitle}>{es ? 'Clave API de OpenRouter' : 'OpenRouter API Key'}</Text>
           </View>
-          <Text style={styles.fieldLabel}>API Key</Text>
+          <Text style={styles.fieldLabel}>{es ? 'Clave API' : 'API Key'}</Text>
           <TextInput
             style={styles.apiKeyInput}
             value={apiKey}
@@ -237,7 +239,7 @@ export default function SettingsScreen() {
             multiline={false}
           />
           <Text style={styles.fieldHint}>
-            Used for AI schematic analysis. Get your key at openrouter.ai
+            {es ? 'Se usa para el análisis de esquemas con AI. Obtén tu clave en openrouter.ai' : 'Used for AI schematic analysis. Get your key at openrouter.ai'}
           </Text>
         </View>
 
@@ -245,9 +247,9 @@ export default function SettingsScreen() {
         <View style={styles.section}>
           <View style={styles.sectionHeader}>
             <Key size={16} color={WT.blue} />
-            <Text style={styles.sectionTitle}>OpenAI API Key</Text>
+            <Text style={styles.sectionTitle}>{es ? 'Clave API de OpenAI' : 'OpenAI API Key'}</Text>
           </View>
-          <Text style={styles.fieldLabel}>API Key</Text>
+          <Text style={styles.fieldLabel}>{es ? 'Clave API' : 'API Key'}</Text>
           <TextInput
             style={styles.apiKeyInput}
             value={openAIApiKey}
@@ -263,7 +265,7 @@ export default function SettingsScreen() {
             multiline={false}
           />
           <Text style={styles.fieldHint}>
-            Used for OpenAI vision calls. Stored locally on this device.
+            {es ? 'Se usa para llamadas de visión de OpenAI. Se guarda localmente en este dispositivo.' : 'Used for OpenAI vision calls. Stored locally on this device.'}
           </Text>
         </View>
 
@@ -271,9 +273,9 @@ export default function SettingsScreen() {
         <View style={styles.section}>
           <View style={styles.sectionHeader}>
             <Key size={16} color={WT.blue} />
-            <Text style={styles.sectionTitle}>Groq API Key</Text>
+            <Text style={styles.sectionTitle}>{es ? 'Clave API de Groq' : 'Groq API Key'}</Text>
           </View>
-          <Text style={styles.fieldLabel}>API Key</Text>
+          <Text style={styles.fieldLabel}>{es ? 'Clave API' : 'API Key'}</Text>
           <TextInput
             style={styles.apiKeyInput}
             value={groqApiKey}
@@ -289,7 +291,7 @@ export default function SettingsScreen() {
             multiline={false}
           />
           <Text style={styles.fieldHint}>
-            Used for Groq vision calls. Stored locally on this device.
+            {es ? 'Se usa para llamadas de visión de Groq. Se guarda localmente en este dispositivo.' : 'Used for Groq vision calls. Stored locally on this device.'}
           </Text>
         </View>
 
@@ -297,7 +299,7 @@ export default function SettingsScreen() {
         <View style={styles.section}>
           <View style={styles.sectionHeader}>
             <Zap size={16} color={WT.blue} />
-            <Text style={styles.sectionTitle}>Reading Speed</Text>
+            <Text style={styles.sectionTitle}>{es ? 'Velocidad de Lectura' : 'Reading Speed'}</Text>
           </View>
           <SegmentControl
             options={['slow', 'normal', 'fast'] as TTSSettings['speed'][]}
@@ -306,7 +308,7 @@ export default function SettingsScreen() {
               console.log('[Settings] Reading speed changed', { speed: v });
               updateSettings({ speed: v });
             }}
-            labels={{ slow: 'Slow', normal: 'Normal', fast: 'Fast' }}
+            labels={es ? { slow: 'Lenta', normal: 'Normal', fast: 'Rápida' } : { slow: 'Slow', normal: 'Normal', fast: 'Fast' }}
           />
         </View>
 
@@ -314,10 +316,10 @@ export default function SettingsScreen() {
         <View style={styles.section}>
           <View style={styles.sectionHeader}>
             <Zap size={16} color={WT.blue} />
-            <Text style={styles.sectionTitle}>Auto-Advance Delay</Text>
+            <Text style={styles.sectionTitle}>{es ? 'Avance Automático' : 'Auto-Advance Delay'}</Text>
           </View>
           <Text style={styles.fieldHint}>
-            Automatically advance to the next step after speech ends
+            {es ? 'Avanza automáticamente al siguiente paso cuando termina la voz' : 'Automatically advance to the next step after speech ends'}
           </Text>
           <SegmentControl
             options={['off', '3s', '5s', '10s'] as TTSSettings['autoAdvanceDelay'][]}
@@ -326,7 +328,7 @@ export default function SettingsScreen() {
               console.log('[Settings] Auto-advance delay changed', { delay: v });
               updateSettings({ autoAdvanceDelay: v });
             }}
-            labels={{ off: 'Off', '3s': '3 sec', '5s': '5 sec', '10s': '10 sec' }}
+            labels={es ? { off: 'Apagado', '3s': '3 seg', '5s': '5 seg', '10s': '10 seg' } : { off: 'Off', '3s': '3 sec', '5s': '5 sec', '10s': '10 sec' }}
           />
         </View>
 
@@ -334,7 +336,7 @@ export default function SettingsScreen() {
         <View style={styles.section}>
           <View style={styles.sectionHeader}>
             <Mic size={16} color={WT.blue} />
-            <Text style={styles.sectionTitle}>Voice</Text>
+            <Text style={styles.sectionTitle}>{es ? 'Voz' : 'Voice'}</Text>
           </View>
           <SegmentControl
             options={['default', 'male', 'female'] as TTSSettings['voice'][]}
@@ -343,37 +345,39 @@ export default function SettingsScreen() {
               console.log('[Settings] Voice changed', { voice: v });
               updateSettings({ voice: v });
             }}
-            labels={{ default: 'Default', male: 'Male', female: 'Female' }}
+            labels={es ? { default: 'Predeterminada', male: 'Masculina', female: 'Femenina' } : { default: 'Default', male: 'Male', female: 'Female' }}
           />
           <Text style={styles.fieldHint}>
-            Voice availability depends on your device's installed voices
+            {es ? 'La disponibilidad de voces depende de las voces instaladas en tu dispositivo' : "Voice availability depends on your device's installed voices"}
           </Text>
         </View>
 
         <View style={styles.section}>
           <View style={styles.sectionHeader}>
             <Mic size={16} color={WT.blue} />
-            <Text style={styles.sectionTitle}>Voice Language</Text>
+            <Text style={styles.sectionTitle}>{es ? 'Idioma de la App' : 'App Language'}</Text>
           </View>
           <SegmentControl
             options={['english', 'spanish'] as TTSSettings['language'][]}
             value={settings.language}
             onChange={(v) => {
-              console.log('[Settings] Voice language changed', { language: v });
+              console.log('[Settings] App language changed', { language: v });
               updateSettings({ language: v });
             }}
-            labels={{ english: 'English', spanish: 'Spanish' }}
+            labels={{ english: 'English', spanish: 'Español' }}
           />
           <Text style={styles.fieldHint}>
-            Controls read-aloud language and voice command recognition language.
+            {es
+              ? 'Controla el idioma de voz, reconocimiento de voz y todo el texto de la app.'
+              : 'Controls the read-aloud voice, voice command recognition, and all app text.'}
           </Text>
           <AnimatedPressable onPress={handleTestVoice} style={styles.testVoiceBtn} scaleValue={0.95}>
             <Text style={styles.testVoiceBtnText}>
               {testingVoice
-                ? settings.language === 'spanish'
+                ? es
                   ? 'Detener prueba de voz'
                   : 'Stop Voice Test'
-                : settings.language === 'spanish'
+                : es
                 ? 'Probar voz'
                 : 'Test Voice'}
             </Text>
@@ -383,26 +387,32 @@ export default function SettingsScreen() {
         <View style={styles.section}>
           <View style={styles.sectionHeader}>
             <Info size={16} color={WT.blue} />
-            <Text style={styles.sectionTitle}>Voice Commands Guide</Text>
+            <Text style={styles.sectionTitle}>{es ? 'Guía de Comandos de Voz' : 'Voice Commands Guide'}</Text>
           </View>
           <View style={styles.voiceGuideCard}>
             <Text style={styles.voiceGuideText}>
-              After each step is read aloud, WireTrace pauses and listens for your command.
+              {es
+                ? 'Después de leer cada paso en voz alta, WireTrace se pausa y escucha tu comando.'
+                : 'After each step is read aloud, WireTrace pauses and listens for your command.'}
             </Text>
             <Text style={styles.voiceGuideCommand}>
-              • Say "next" to continue to the next step
+              {es ? '• Di "siguiente" para continuar al siguiente paso' : '• Say "next" to continue to the next step'}
             </Text>
             <Text style={styles.voiceGuideCommand}>
-              • Say "go back" to move back one step
+              {es ? '• Di "regresa" para retroceder un paso' : '• Say "go back" to move back one step'}
             </Text>
             <Text style={styles.voiceGuideCommand}>
-              • Say "help" to ask an AI question by voice, then speak your question
+              {es
+                ? '• Di "ayuda" para hacer una pregunta a la AI por voz, luego di tu pregunta'
+                : '• Say "help" to ask an AI question by voice, then speak your question'}
             </Text>
             <Text style={styles.voiceGuideCommand}>
-              • Say "repeat" to hear the current step again
+              {es ? '• Di "repite" para escuchar el paso actual otra vez' : '• Say "repeat" to hear the current step again'}
             </Text>
             <Text style={styles.voiceGuideText}>
-              Spanish mode uses: "siguiente", "regresa", "ayuda", and "repite".
+              {es
+                ? 'El modo inglés usa: "next", "go back", "help" y "repeat".'
+                : 'Spanish mode uses: "siguiente", "regresa", "ayuda", and "repite".'}
             </Text>
           </View>
         </View>
@@ -410,7 +420,7 @@ export default function SettingsScreen() {
         <View style={styles.section}>
           <View style={styles.sectionHeader}>
             <Info size={16} color={WT.blue} />
-            <Text style={styles.sectionTitle}>UI Visual Mode</Text>
+            <Text style={styles.sectionTitle}>{es ? 'Modo Visual de la Interfaz' : 'UI Visual Mode'}</Text>
           </View>
           <SegmentControl
             options={['normalLight', 'highContrast', 'detailedSymbols'] as VisualMode[]}
@@ -419,21 +429,23 @@ export default function SettingsScreen() {
               console.log('[Settings] Visual mode changed', { visualMode: v });
               updateUiPrefs({ visualMode: v });
             }}
-            labels={{
-              normalLight: 'Light',
-              highContrast: 'Highlight',
-              detailedSymbols: 'Symbols',
-            }}
+            labels={
+              es
+                ? { normalLight: 'Claro', highContrast: 'Resaltado', detailedSymbols: 'Símbolos' }
+                : { normalLight: 'Light', highContrast: 'Highlight', detailedSymbols: 'Symbols' }
+            }
           />
           <Text style={styles.fieldHint}>
-            Choose a visual mode for readability and symbol detail emphasis.
+            {es
+              ? 'Elige un modo visual para mejorar la legibilidad y el detalle de símbolos.'
+              : 'Choose a visual mode for readability and symbol detail emphasis.'}
           </Text>
         </View>
 
         <View style={styles.section}>
           <View style={styles.sectionHeader}>
             <Info size={16} color={WT.blue} />
-            <Text style={styles.sectionTitle}>AI Vision Provider</Text>
+            <Text style={styles.sectionTitle}>{es ? 'Proveedor de Visión AI' : 'AI Vision Provider'}</Text>
           </View>
           <SegmentControl
             options={['all', 'openrouter', 'openai', 'groq'] as VisionProviderPreference[]}
@@ -442,22 +454,23 @@ export default function SettingsScreen() {
               console.log('[Settings] Vision provider preference changed', { visionProvider: v });
               updateUiPrefs({ visionProvider: v });
             }}
-            labels={{
-              all: 'All 3 (Auto)',
-              openrouter: 'OpenRouter',
-              openai: 'OpenAI',
-              groq: 'Groq',
-            }}
+            labels={
+              es
+                ? { all: 'Los 3 (Auto)', openrouter: 'OpenRouter', openai: 'OpenAI', groq: 'Groq' }
+                : { all: 'All 3 (Auto)', openrouter: 'OpenRouter', openai: 'OpenAI', groq: 'Groq' }
+            }
           />
           <Text style={styles.fieldHint}>
-            All 3 uses automatic fallback. Single provider forces only that AI.
+            {es
+              ? 'Los 3 usa respaldo automático. Un solo proveedor fuerza solo esa AI.'
+              : 'All 3 uses automatic fallback. Single provider forces only that AI.'}
           </Text>
         </View>
 
         <View style={styles.section}>
           <View style={styles.sectionHeader}>
             <Info size={16} color={WT.blue} />
-            <Text style={styles.sectionTitle}>Layout & Tool Preset</Text>
+            <Text style={styles.sectionTitle}>{es ? 'Diseño y Preajuste de Herramientas' : 'Layout & Tool Preset'}</Text>
           </View>
           <SegmentControl
             options={['industrial', 'residential', 'commercial'] as LayoutPreset[]}
@@ -466,14 +479,16 @@ export default function SettingsScreen() {
               console.log('[Settings] Layout preset changed', { layoutPreset: v });
               updateUiPrefs({ layoutPreset: v });
             }}
-            labels={{
-              industrial: 'Industrial',
-              residential: 'Residential',
-              commercial: 'Commercial',
-            }}
+            labels={
+              es
+                ? { industrial: 'Industrial', residential: 'Residencial', commercial: 'Comercial' }
+                : { industrial: 'Industrial', residential: 'Residential', commercial: 'Commercial' }
+            }
           />
           <Text style={styles.fieldHint}>
-            Select a workflow layout tuned for industrial wiring, residential, or commercial jobs.
+            {es
+              ? 'Selecciona un diseño de flujo de trabajo para cableado industrial, residencial o comercial.'
+              : 'Select a workflow layout tuned for industrial wiring, residential, or commercial jobs.'}
           </Text>
         </View>
 
@@ -481,20 +496,22 @@ export default function SettingsScreen() {
         <View style={styles.section}>
           <View style={styles.sectionHeader}>
             <Info size={16} color={WT.blue} />
-            <Text style={styles.sectionTitle}>About WireTrace AI</Text>
+            <Text style={styles.sectionTitle}>{es ? 'Acerca de WireTrace AI' : 'About WireTrace AI'}</Text>
           </View>
           <View style={styles.aboutCard}>
             <Text style={styles.aboutTitle}>WireTrace AI</Text>
-            <Text style={styles.aboutVersion}>Version 1.0.0</Text>
+            <Text style={styles.aboutVersion}>{es ? 'Versión 1.0.0' : 'Version 1.0.0'}</Text>
             <Text style={styles.aboutDesc}>
-              AI-powered wire schematic reader for electricians and technicians. Photograph any wire diagram and get step-by-step audio guidance.
+              {es
+                ? 'Lector de esquemas de cableado con AI para electricistas y técnicos. Fotografía cualquier diagrama de cableado y obtén guía de audio paso a paso.'
+                : 'AI-powered wire schematic reader for electricians and technicians. Photograph any wire diagram and get step-by-step audio guidance.'}
             </Text>
             <View style={styles.aboutDivider} />
             <Text style={styles.aboutModel}>
-              {'AI Model: '}
+              {es ? 'Modelo AI: ' : 'AI Model: '}
               <Text style={styles.aboutModelName}>Claude Sonnet 4.5, OpenAI, and Groq</Text>
             </Text>
-            <Text style={styles.aboutPowered}>Powered by multiple vision providers</Text>
+            <Text style={styles.aboutPowered}>{es ? 'Impulsado por múltiples proveedores de visión' : 'Powered by multiple vision providers'}</Text>
           </View>
         </View>
       </ScrollView>

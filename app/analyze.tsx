@@ -29,6 +29,7 @@ import {
   Zap,
 } from 'lucide-react-native';
 import { WT } from '@/constants/wiretrace';
+import { AppLanguage, isSpanish, loadAppLanguage } from '@/utils/app-language';
 import { analyzeSchematic, analyzeMultipleImages, AnalysisResult } from '@/utils/openrouter';
 import {
   generateSchematicName,
@@ -137,6 +138,8 @@ export default function AnalyzeScreen() {
   const [askingAi, setAskingAi] = useState(false);
   const [highlightKey, setHighlightKey] = useState<string | null>(null);
   const [uiPrefs, setUiPrefs] = useState(DEFAULT_UI_PREFERENCES);
+  const [language, setLanguage] = useState<AppLanguage>('english');
+  const es = isSpanish(language);
 
   const pulseAnim = useRef(new Animated.Value(0.6)).current;
 
@@ -161,6 +164,13 @@ export default function AnalyzeScreen() {
         })
         .catch((error) => {
           console.error('[Analyze] Failed to refresh UI preferences', error);
+        });
+      loadAppLanguage()
+        .then((lang) => {
+          if (isMounted) setLanguage(lang);
+        })
+        .catch((error) => {
+          console.error('[Analyze] Failed to load app language', error);
         });
       return () => {
         isMounted = false;
@@ -201,13 +211,13 @@ export default function AnalyzeScreen() {
       setSchematic(newSchematic);
       console.log('[Analyze] Analysis complete', { id: newSchematic.id, wires: newSchematic.wireCount });
     } catch (e) {
-      const msg = e instanceof Error ? e.message : 'Analysis failed';
+      const msg = e instanceof Error ? e.message : es ? 'El análisis falló' : 'Analysis failed';
       console.error('[Analyze] Analysis error', e);
       setError(msg);
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [es]);
 
   const runMultiAnalysis = useCallback(async (imageUris: string[]) => {
     setLoading(true);
@@ -244,20 +254,20 @@ export default function AnalyzeScreen() {
       setSchematic(newSchematic);
       console.log('[Analyze] Multi-page analysis complete', { id: newSchematic.id, wires: newSchematic.wireCount });
     } catch (e) {
-      const msg = e instanceof Error ? e.message : 'Analysis failed';
+      const msg = e instanceof Error ? e.message : es ? 'El análisis falló' : 'Analysis failed';
       console.error('[Analyze] Multi-page analysis error', e);
       setError(msg);
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [es]);
 
   useEffect(() => {
     if (params.schematicId) {
       console.log('[Analyze] Loading existing schematic', { id: params.schematicId });
       getSchematic(params.schematicId).then((s) => {
         if (s) setSchematic(s);
-        else setError('Schematic not found');
+        else setError(es ? 'Esquema no encontrado' : 'Schematic not found');
       });
     } else if (params.imageUris) {
       const uris = JSON.parse(params.imageUris as string) as string[];
@@ -313,7 +323,7 @@ export default function AnalyzeScreen() {
         params: { schematicId: updated.id, direction, startLabel },
       });
     } catch (e) {
-      const msg = e instanceof Error ? e.message : 'Failed to generate steps';
+      const msg = e instanceof Error ? e.message : es ? 'No se pudieron generar los pasos' : 'Failed to generate steps';
       console.error('[Analyze] Step generation error', e);
       setError(msg);
     } finally {
@@ -349,11 +359,11 @@ export default function AnalyzeScreen() {
           unknownSymbols: schematic.unknownSymbols,
           summary: schematic.summary ?? '',
         },
-        aiQuestion.trim()
+        es ? `${aiQuestion.trim()} (Responde en español.)` : aiQuestion.trim()
       );
       setAiAnswer(answer);
     } catch (e) {
-      const msg = e instanceof Error ? e.message : 'Failed to get AI answer';
+      const msg = e instanceof Error ? e.message : es ? 'No se pudo obtener la respuesta de la AI' : 'Failed to get AI answer';
       console.error('[Analyze] AI question error', e);
       setError(msg);
     } finally {
@@ -376,11 +386,13 @@ export default function AnalyzeScreen() {
           unknownSymbols: schematic.unknownSymbols,
           summary: schematic.summary ?? '',
         },
-        'Give concise suggestions for what I should do next while working on this schematic. Include checks, safety reminders, and one likely troubleshooting step.'
+        es
+          ? 'Da sugerencias concisas en español sobre qué debo hacer a continuación mientras trabajo en este esquema. Incluye verificaciones, recordatorios de seguridad y un posible paso de solución de problemas.'
+          : 'Give concise suggestions for what I should do next while working on this schematic. Include checks, safety reminders, and one likely troubleshooting step.'
       );
       setAiSuggestions(suggestions);
     } catch (e) {
-      const msg = e instanceof Error ? e.message : 'Failed to get AI suggestions';
+      const msg = e instanceof Error ? e.message : es ? 'No se pudieron obtener sugerencias de la AI' : 'Failed to get AI suggestions';
       console.error('[Analyze] AI suggestions error', e);
       setError(msg);
     } finally {
@@ -410,6 +422,8 @@ export default function AnalyzeScreen() {
       ? 'OpenAI'
       : uiPrefs.visionProvider === 'groq'
       ? 'Groq'
+      : es
+      ? 'Automático (OpenRouter → OpenAI → Groq)'
       : 'Auto (OpenRouter → OpenAI → Groq)';
   const wireDisplayLimit = uiPrefs.layoutPreset === 'residential' ? 5 : uiPrefs.layoutPreset === 'commercial' ? 10 : 8;
   const connectionDisplayLimit = uiPrefs.layoutPreset === 'residential' ? 4 : uiPrefs.layoutPreset === 'commercial' ? 8 : 6;
@@ -445,7 +459,7 @@ export default function AnalyzeScreen() {
         }} style={styles.backBtn} scaleValue={0.9}>
           <ArrowLeft size={22} color={WT.blue} />
         </AnimatedPressable>
-        <Text style={[styles.headerTitle, isLightMode && styles.headerTitleLight, isDetailedSymbols && styles.headerTitleSymbols]}>Analyze Schematic</Text>
+        <Text style={[styles.headerTitle, isLightMode && styles.headerTitleLight, isDetailedSymbols && styles.headerTitleSymbols]}>{es ? 'Analizar Esquema' : 'Analyze Schematic'}</Text>
         <View style={{ width: 44 }} />
       </View>
 
@@ -471,9 +485,9 @@ export default function AnalyzeScreen() {
             <Animated.View style={[styles.loadingDot, { opacity: pulseAnim }]}>
               <Zap size={20} color={WT.blue} fill={WT.blue} />
             </Animated.View>
-            <Text style={styles.loadingTitle}>Analyzing schematic...</Text>
-            <Text style={styles.loadingSubtitle}>AI is extracting wires, components, and connections</Text>
-            <Text style={styles.loadingProviderText}>Active AI Provider: {activeVisionProviderLabel}</Text>
+            <Text style={styles.loadingTitle}>{es ? 'Analizando esquema...' : 'Analyzing schematic...'}</Text>
+            <Text style={styles.loadingSubtitle}>{es ? 'La AI está extrayendo cables, componentes y conexiones' : 'AI is extracting wires, components, and connections'}</Text>
+            <Text style={styles.loadingProviderText}>{es ? 'Proveedor AI activo: ' : 'Active AI Provider: '}{activeVisionProviderLabel}</Text>
             <View style={{ gap: 12, marginTop: 8 }}>
               <SkeletonCard />
               <SkeletonCard />
@@ -487,7 +501,7 @@ export default function AnalyzeScreen() {
           <View style={styles.errorCard}>
             <AlertTriangle size={24} color={WT.red} />
             <View style={{ flex: 1 }}>
-              <Text style={styles.errorTitle}>Analysis failed</Text>
+              <Text style={styles.errorTitle}>{es ? 'El análisis falló' : 'Analysis failed'}</Text>
               <Text style={styles.errorMsg}>{error}</Text>
             </View>
             <AnimatedPressable
@@ -498,7 +512,7 @@ export default function AnalyzeScreen() {
               style={styles.retryBtn}
             >
               <RefreshCw size={16} color={WT.blue} />
-              <Text style={styles.retryBtnText}>Retry</Text>
+              <Text style={styles.retryBtnText}>{es ? 'Reintentar' : 'Retry'}</Text>
             </AnimatedPressable>
           </View>
         )}
@@ -508,9 +522,15 @@ export default function AnalyzeScreen() {
           <>
             <View style={[styles.prefBanner, isHighContrast && styles.prefBannerHighContrast, isDetailedSymbols && styles.prefBannerSymbols]}>
               <Text style={[styles.prefBannerText, isLightMode && styles.prefBannerTextDark]}>
-                Visual: {uiPrefs.visualMode === 'normalLight' ? 'Normal Light' : uiPrefs.visualMode === 'highContrast' ? 'High Contrast' : 'Detailed Symbols'}
+                {es ? 'Visual: ' : 'Visual: '}
+                {es
+                  ? uiPrefs.visualMode === 'normalLight' ? 'Luz Normal' : uiPrefs.visualMode === 'highContrast' ? 'Alto Contraste' : 'Símbolos Detallados'
+                  : uiPrefs.visualMode === 'normalLight' ? 'Normal Light' : uiPrefs.visualMode === 'highContrast' ? 'High Contrast' : 'Detailed Symbols'}
                 {' • '}
-                Layout: {uiPrefs.layoutPreset.charAt(0).toUpperCase() + uiPrefs.layoutPreset.slice(1)}
+                {es ? 'Diseño: ' : 'Layout: '}
+                {es
+                  ? uiPrefs.layoutPreset === 'industrial' ? 'Industrial' : uiPrefs.layoutPreset === 'residential' ? 'Residencial' : 'Comercial'
+                  : uiPrefs.layoutPreset.charAt(0).toUpperCase() + uiPrefs.layoutPreset.slice(1)}
               </Text>
             </View>
 
@@ -519,10 +539,9 @@ export default function AnalyzeScreen() {
               <View style={styles.warningBanner}>
                 <AlertTriangle size={18} color={WT.yellow} />
                 <Text style={styles.warningText}>
-                  {unknownCount}
-                  {' unknown symbol'}
-                  {unknownCount !== 1 ? 's' : ''}
-                  {' found — identify them for best results'}
+                  {es
+                    ? `${unknownCount} símbolo${unknownCount !== 1 ? 's' : ''} desconocido${unknownCount !== 1 ? 's' : ''} encontrado${unknownCount !== 1 ? 's' : ''} — identifícalos para mejores resultados`
+                    : `${unknownCount} unknown symbol${unknownCount !== 1 ? 's' : ''} found — identify them for best results`}
                 </Text>
                 <AnimatedPressable
                   onPress={() => {
@@ -532,7 +551,7 @@ export default function AnalyzeScreen() {
                   }}
                   style={styles.identifyNowBtn}
                 >
-                  <Text style={styles.identifyNowText}>Identify</Text>
+                  <Text style={styles.identifyNowText}>{es ? 'Identificar' : 'Identify'}</Text>
                 </AnimatedPressable>
               </View>
             )}
@@ -540,7 +559,7 @@ export default function AnalyzeScreen() {
             {/* AI Summary */}
             {schematic.summary ? (
               <View style={styles.summaryCard}>
-                <Text style={styles.summaryLabel}>AI Summary</Text>
+                <Text style={styles.summaryLabel}>{es ? 'Resumen AI' : 'AI Summary'}</Text>
                 <Text style={styles.summaryText}>{schematic.summary}</Text>
               </View>
             ) : null}
@@ -548,27 +567,27 @@ export default function AnalyzeScreen() {
             <View style={[styles.card, isHighContrast && styles.highContrastCard]}>
               <View style={styles.cardHeader}>
                 <MessageSquare size={16} color={WT.blue} />
-                <Text style={styles.cardTitle}>Ask AI / Get Directions</Text>
+                <Text style={styles.cardTitle}>{es ? 'Preguntar a la AI / Obtener Indicaciones' : 'Ask AI / Get Directions'}</Text>
               </View>
               <Text style={styles.aiHelperText}>
-                Ask a question or request guidance while using this schematic.
+                {es ? 'Haz una pregunta o pide orientación mientras usas este esquema.' : 'Ask a question or request guidance while using this schematic.'}
               </Text>
               <AnimatedPressable
                 onPress={handleGetSuggestions}
                 style={[styles.aiSuggestBtn, askingAi && styles.aiAskBtnDisabled]}
                 disabled={askingAi}
               >
-                <Text style={styles.aiSuggestBtnText}>{askingAi ? 'Working...' : 'Get AI Suggestions'}</Text>
+                <Text style={styles.aiSuggestBtnText}>{askingAi ? (es ? 'Trabajando...' : 'Working...') : es ? 'Obtener Sugerencias de la AI' : 'Get AI Suggestions'}</Text>
               </AnimatedPressable>
               {aiSuggestions ? (
                 <View style={styles.aiAnswerBox}>
-                  <Text style={styles.aiAnswerLabel}>Suggestions</Text>
+                  <Text style={styles.aiAnswerLabel}>{es ? 'Sugerencias' : 'Suggestions'}</Text>
                   <Text style={styles.aiAnswerText}>{aiSuggestions}</Text>
                 </View>
               ) : null}
               <TextInput
                 style={styles.aiInput}
-                placeholder="Example: what should I check first if wire 14 has no voltage?"
+                placeholder={es ? 'Ejemplo: ¿qué debo revisar primero si el cable 14 no tiene voltaje?' : 'Example: what should I check first if wire 14 has no voltage?'}
                 placeholderTextColor={WT.textTertiary}
                 value={aiQuestion}
                 onChangeText={setAiQuestion}
@@ -580,11 +599,11 @@ export default function AnalyzeScreen() {
                 disabled={!aiQuestion.trim() || askingAi}
               >
                 <Send size={15} color="#FFFFFF" />
-                <Text style={styles.aiAskBtnText}>{askingAi ? 'Asking AI...' : 'Ask AI'}</Text>
+                <Text style={styles.aiAskBtnText}>{askingAi ? (es ? 'Preguntando a la AI...' : 'Asking AI...') : es ? 'Preguntar a la AI' : 'Ask AI'}</Text>
               </AnimatedPressable>
               {aiAnswer ? (
                 <View style={styles.aiAnswerBox}>
-                  <Text style={styles.aiAnswerLabel}>Answer</Text>
+                  <Text style={styles.aiAnswerLabel}>{es ? 'Respuesta' : 'Answer'}</Text>
                   <Text style={styles.aiAnswerText}>{aiAnswer}</Text>
                 </View>
               ) : null}
@@ -593,7 +612,7 @@ export default function AnalyzeScreen() {
             <View style={styles.highlightHint}>
               <Highlighter size={15} color={WT.yellow} />
               <Text style={styles.highlightHintText}>
-                Tap any wire, component, connection, or unknown symbol to highlight it.
+                {es ? 'Toca cualquier cable, componente, conexión o símbolo desconocido para resaltarlo.' : 'Tap any wire, component, connection, or unknown symbol to highlight it.'}
               </Text>
             </View>
 
@@ -601,13 +620,13 @@ export default function AnalyzeScreen() {
             <View style={[styles.card, isHighContrast && styles.highContrastCard, isDetailedSymbols && styles.symbolsCard]}>
               <View style={styles.cardHeader}>
                 <Zap size={16} color={WT.blue} />
-                <Text style={[styles.cardTitle, isDetailedSymbols && styles.symbolsPrimaryText]}>Wire Summary</Text>
+                <Text style={[styles.cardTitle, isDetailedSymbols && styles.symbolsPrimaryText]}>{es ? 'Resumen de Cables' : 'Wire Summary'}</Text>
                 <View style={styles.countBadge}>
                   <Text style={styles.countBadgeText}>{schematic.wireCount}</Text>
                 </View>
               </View>
               {schematic.wires.length === 0 ? (
-                <Text style={styles.emptyCardText}>No wires detected</Text>
+                <Text style={styles.emptyCardText}>{es ? 'No se detectaron cables' : 'No wires detected'}</Text>
               ) : (
                 schematic.wires.slice(0, wireDisplayLimit).map((wire) => (
                   <AnimatedPressable
@@ -642,9 +661,9 @@ export default function AnalyzeScreen() {
               )}
               {schematic.wires.length > wireDisplayLimit && (
                 <Text style={styles.moreText}>
-                  {'+'}
-                  {schematic.wires.length - wireDisplayLimit}
-                  {' more wires'}
+                  {es
+                    ? `+${schematic.wires.length - wireDisplayLimit} cables más`
+                    : `+${schematic.wires.length - wireDisplayLimit} more wires`}
                 </Text>
               )}
             </View>
@@ -653,13 +672,13 @@ export default function AnalyzeScreen() {
             <View style={[styles.card, isHighContrast && styles.highContrastCard, isDetailedSymbols && styles.symbolsCard]}>
               <View style={styles.cardHeader}>
                 <Cpu size={16} color={WT.blue} />
-                <Text style={[styles.cardTitle, isDetailedSymbols && styles.symbolsPrimaryText]}>Components Found</Text>
+                <Text style={[styles.cardTitle, isDetailedSymbols && styles.symbolsPrimaryText]}>{es ? 'Componentes Encontrados' : 'Components Found'}</Text>
                 <View style={styles.countBadge}>
                   <Text style={styles.countBadgeText}>{schematic.componentCount}</Text>
                 </View>
               </View>
               {schematic.components.length === 0 ? (
-                <Text style={styles.emptyCardText}>No components detected</Text>
+                <Text style={styles.emptyCardText}>{es ? 'No se detectaron componentes' : 'No components detected'}</Text>
               ) : (
                 schematic.components.map((comp) => (
                   <AnimatedPressable
@@ -690,7 +709,7 @@ export default function AnalyzeScreen() {
               <View style={[styles.card, isHighContrast && styles.highContrastCard, isDetailedSymbols && styles.symbolsCard]}>
                 <View style={styles.cardHeader}>
                   <AlertTriangle size={16} color={WT.yellow} />
-                  <Text style={[styles.cardTitle, isDetailedSymbols && styles.symbolsPrimaryText]}>Unknown Symbols</Text>
+                  <Text style={[styles.cardTitle, isDetailedSymbols && styles.symbolsPrimaryText]}>{es ? 'Símbolos Desconocidos' : 'Unknown Symbols'}</Text>
                   <View style={[styles.countBadge, styles.countBadgeWarning]}>
                     <Text style={[styles.countBadgeText, styles.countBadgeTextWarning]}>
                       {schematic.unknownSymbols.length}
@@ -718,7 +737,7 @@ export default function AnalyzeScreen() {
                         onPress={() => handleIdentifyUnknown(sym.id)}
                         style={styles.tapIdentifyBtn}
                       >
-                        <Text style={styles.tapIdentifyText}>Identify</Text>
+                        <Text style={styles.tapIdentifyText}>{es ? 'Identificar' : 'Identify'}</Text>
                       </AnimatedPressable>
                     )}
                   </AnimatedPressable>
@@ -732,13 +751,13 @@ export default function AnalyzeScreen() {
                 <View style={styles.connectionIcon}>
                   <Text style={styles.connectionIconText}>⟶</Text>
                 </View>
-                <Text style={[styles.cardTitle, isDetailedSymbols && styles.symbolsPrimaryText]}>Point-to-Point Connections</Text>
+                <Text style={[styles.cardTitle, isDetailedSymbols && styles.symbolsPrimaryText]}>{es ? 'Conexiones Punto a Punto' : 'Point-to-Point Connections'}</Text>
                 <View style={styles.countBadge}>
                   <Text style={styles.countBadgeText}>{schematic.connections.length}</Text>
                 </View>
               </View>
               {schematic.connections.length === 0 ? (
-                <Text style={styles.emptyCardText}>No connections detected</Text>
+                <Text style={styles.emptyCardText}>{es ? 'No se detectaron conexiones' : 'No connections detected'}</Text>
               ) : (
                 schematic.connections.slice(0, connectionDisplayLimit).map((conn) => (
                   <AnimatedPressable
@@ -756,16 +775,16 @@ export default function AnalyzeScreen() {
               )}
               {schematic.connections.length > connectionDisplayLimit && (
                 <Text style={styles.moreText}>
-                  {'+'}
-                  {schematic.connections.length - connectionDisplayLimit}
-                  {' more connections'}
+                  {es
+                    ? `+${schematic.connections.length - connectionDisplayLimit} conexiones más`
+                    : `+${schematic.connections.length - connectionDisplayLimit} more connections`}
                 </Text>
               )}
             </View>
 
             {/* Reading Direction */}
             <View style={styles.card}>
-              <Text style={styles.cardTitle}>Reading Direction</Text>
+              <Text style={styles.cardTitle}>{es ? 'Dirección de Lectura' : 'Reading Direction'}</Text>
               <View style={styles.directionToggle}>
                 <AnimatedPressable
                   onPress={() => {
@@ -775,7 +794,7 @@ export default function AnalyzeScreen() {
                   style={[styles.dirBtn, direction === 'forward' && styles.dirBtnActive]}
                 >
                   <Text style={[styles.dirBtnText, direction === 'forward' && styles.dirBtnTextActive]}>
-                    Forward (Line 1 → End)
+                    {es ? 'Adelante (Línea 1 → Final)' : 'Forward (Line 1 → End)'}
                   </Text>
                 </AnimatedPressable>
                 <AnimatedPressable
@@ -786,19 +805,25 @@ export default function AnalyzeScreen() {
                   style={[styles.dirBtn, direction === 'backward' && styles.dirBtnActive]}
                 >
                   <Text style={[styles.dirBtnText, direction === 'backward' && styles.dirBtnTextActive]}>
-                    Backward (End → Line 1)
+                    {es ? 'Atrás (Final → Línea 1)' : 'Backward (End → Line 1)'}
                   </Text>
                 </AnimatedPressable>
               </View>
 
-              <Text style={styles.startLabel}>Start Point</Text>
+              <Text style={styles.startLabel}>{es ? 'Punto de Inicio' : 'Start Point'}</Text>
               <View style={styles.startOptions}>
                 {(['beginning', 'end', 'specific'] as StartPoint[]).map((opt) => {
-                  const labels: Record<StartPoint, string> = {
-                    beginning: 'From Beginning',
-                    end: 'From End',
-                    specific: 'Specific Wire/Component',
-                  };
+                  const labels: Record<StartPoint, string> = es
+                    ? {
+                        beginning: 'Desde el Principio',
+                        end: 'Desde el Final',
+                        specific: 'Cable/Componente Específico',
+                      }
+                    : {
+                        beginning: 'From Beginning',
+                        end: 'From End',
+                        specific: 'Specific Wire/Component',
+                      };
                   return (
                     <AnimatedPressable
                       key={opt}
@@ -829,7 +854,7 @@ export default function AnalyzeScreen() {
                   >
                     <Search size={16} color={WT.textSecondary} />
                     <Text style={[styles.pickerToggleText, specificStart && { color: WT.textPrimary }]}>
-                      {specificStart || 'Search wires & components...'}
+                      {specificStart || (es ? 'Buscar cables y componentes...' : 'Search wires & components...')}
                     </Text>
                     {showStartPicker ? (
                       <ChevronUp size={16} color={WT.textSecondary} />
@@ -842,7 +867,7 @@ export default function AnalyzeScreen() {
                     <View style={styles.pickerDropdown}>
                       <TextInput
                         style={styles.pickerSearch}
-                        placeholder="Search..."
+                        placeholder={es ? 'Buscar...' : 'Search...'}
                         placeholderTextColor={WT.textTertiary}
                         value={searchQuery}
                         onChangeText={setSearchQuery}
@@ -863,7 +888,7 @@ export default function AnalyzeScreen() {
                         </AnimatedPressable>
                       ))}
                       {filteredItems.length === 0 && (
-                        <Text style={styles.pickerEmpty}>No matches found</Text>
+                        <Text style={styles.pickerEmpty}>{es ? 'No se encontraron coincidencias' : 'No matches found'}</Text>
                       )}
                     </View>
                   )}
@@ -884,11 +909,11 @@ export default function AnalyzeScreen() {
             scaleValue={0.97}
           >
             {generatingSteps ? (
-              <Text style={styles.startBtnText}>Generating steps...</Text>
+              <Text style={styles.startBtnText}>{es ? 'Generando pasos...' : 'Generating steps...'}</Text>
             ) : (
               <>
                 <Play size={20} color="#FFFFFF" fill="#FFFFFF" />
-                <Text style={styles.startBtnText}>Start Reading</Text>
+                <Text style={styles.startBtnText}>{es ? 'Comenzar Lectura' : 'Start Reading'}</Text>
               </>
             )}
           </AnimatedPressable>

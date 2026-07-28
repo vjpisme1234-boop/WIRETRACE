@@ -92,7 +92,6 @@ jobs:
           eas build \
             --platform android \
             --profile production \
-            --type app-bundle \
             --non-interactive \
             --no-wait
 

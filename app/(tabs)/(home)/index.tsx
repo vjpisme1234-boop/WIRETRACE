@@ -3,7 +3,6 @@ import {
   Animated,
   FlatList,
   Image,
-  ImageBackground,
   ImageSourcePropType,
   Pressable,
   StyleSheet,
@@ -16,8 +15,7 @@ import { BookOpen, Camera, CircuitBoard, Clock, Settings, Zap } from 'lucide-rea
 import { WT } from '@/constants/wiretrace';
 import { loadSchematics, SchematicAnalysis } from '@/utils/schematic-storage';
 import { AppLanguage, isSpanish, loadAppLanguage } from '@/utils/app-language';
-
-const HOME_BACKGROUND = require('../../../assets/images/home-background-gears.png');
+import CircuitBackground from '@/components/CircuitBackground';
 
 function resolveImageSource(source: string | number | ImageSourcePropType | undefined): ImageSourcePropType {
   if (!source) return { uri: '' };
@@ -53,6 +51,7 @@ function AnimatedPressable({
 function SchematicCard({ item, index, language }: { item: SchematicAnalysis; index: number; language: AppLanguage }) {
   const opacity = useRef(new Animated.Value(0)).current;
   const translateY = useRef(new Animated.Value(16)).current;
+  const es = isSpanish(language);
 
   useEffect(() => {
     Animated.parallel([
@@ -171,20 +170,20 @@ export default function HomeScreen() {
 
   return (
     <View style={styles.root}>
-      <ImageBackground source={HOME_BACKGROUND} style={styles.background} imageStyle={styles.backgroundImage}>
-        <View style={styles.backgroundOverlay}>
-          {/* Header */}
-          <View style={[styles.header, { paddingTop: topPad }]}>
-            <View style={styles.headerLeft}>
-              <Zap size={22} color={WT.blue} fill={WT.blue} />
-              <Text style={styles.headerTitle}>WireTrace AI</Text>
-            </View>
-            <AnimatedPressable onPress={handleSettings} style={styles.settingsBtn} scaleValue={0.9}>
-              <Settings size={22} color={WT.textSecondary} />
-            </AnimatedPressable>
+      <CircuitBackground />
+      <View style={styles.contentContainer}>
+        {/* Header */}
+        <View style={[styles.header, { paddingTop: topPad }]}>
+          <View style={styles.headerLeft}>
+            <Zap size={22} color={WT.blue} fill={WT.blue} />
+            <Text style={styles.headerTitle}>WireTrace AI</Text>
           </View>
+          <AnimatedPressable onPress={handleSettings} style={styles.settingsBtn} scaleValue={0.9}>
+            <Settings size={22} color={WT.textSecondary} />
+          </AnimatedPressable>
+        </View>
 
-          <FlatList
+        <FlatList
             data={schematics}
             keyExtractor={(item) => item.id}
             contentContainerStyle={[styles.listContent, { paddingBottom: insets.bottom + 32 }]}
@@ -236,12 +235,11 @@ export default function HomeScreen() {
             ItemSeparatorComponent={() => <View style={styles.separator} />}
           />
 
-          {/* Footer */}
-          <View style={[styles.footer, { paddingBottom: insets.bottom + 8 }]}>
-            <Text style={styles.footerText}>{es ? 'Impulsado por Visión AI' : 'Powered by AI Vision'}</Text>
-          </View>
+        {/* Footer */}
+        <View style={[styles.footer, { paddingBottom: insets.bottom + 8 }]}>
+          <Text style={styles.footerText}>{es ? 'Impulsado por Visión AI' : 'Powered by AI Vision'}</Text>
         </View>
-      </ImageBackground>
+      </View>
     </View>
   );
 }
@@ -251,16 +249,8 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: WT.bg,
   },
-  background: {
+  contentContainer: {
     flex: 1,
-  },
-  backgroundImage: {
-    resizeMode: 'contain',
-    opacity: 0.16,
-  },
-  backgroundOverlay: {
-    flex: 1,
-    backgroundColor: 'rgba(10, 14, 22, 0.9)',
   },
   header: {
     flexDirection: 'row',
@@ -476,4 +466,3 @@ const styles = StyleSheet.create({
     letterSpacing: 0.3,
   },
 });
-  const es = isSpanish(language);

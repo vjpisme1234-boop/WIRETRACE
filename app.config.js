@@ -72,9 +72,6 @@ module.exports = {
       eas: {
         projectId: "227c64f5-68a5-46e2-ab10-60823a4a8bae",
       },
-      claudeKey: process.env.CLAUDE_API_KEY,
-      openaiKey: process.env.OPENAI_API_KEY,
-      groqKey: process.env.GROQ_API_KEY,
     },
   },
 };

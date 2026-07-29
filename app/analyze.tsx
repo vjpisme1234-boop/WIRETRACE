@@ -1,8 +1,10 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
+  Alert,
   Animated,
   Image,
   ImageSourcePropType,
+  Modal,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -22,10 +24,13 @@ import {
   Cpu,
   Highlighter,
   MessageSquare,
+  Pencil,
   Play,
   RefreshCw,
   Search,
   Send,
+  Trash2,
+  X,
   Zap,
 } from 'lucide-react-native';
 import { WT } from '@/constants/wiretrace';
@@ -118,6 +123,48 @@ function SkeletonCard() {
 type ReadingDirection = 'forward' | 'backward';
 type StartPoint = 'beginning' | 'end' | 'specific';
 
+type EditTarget =
+  | { kind: 'wire'; id: string }
+  | { kind: 'component'; id: string }
+  | { kind: 'connection'; id: string }
+  | { kind: 'summary' };
+
+interface EditFieldDef {
+  key: string;
+  label: string;
+  labelEs: string;
+  multiline?: boolean;
+}
+
+const EDIT_FIELDS: Record<EditTarget['kind'], EditFieldDef[]> = {
+  wire: [
+    { key: 'label', label: 'Wire Label', labelEs: 'Etiqueta del Cable' },
+    { key: 'color', label: 'Color', labelEs: 'Color' },
+    { key: 'fromPoint', label: 'From', labelEs: 'Desde' },
+    { key: 'toPoint', label: 'To', labelEs: 'Hasta' },
+    { key: 'voltage', label: 'Voltage', labelEs: 'Voltaje' },
+  ],
+  component: [
+    { key: 'label', label: 'Component Label', labelEs: 'Etiqueta del Componente' },
+    { key: 'type', label: 'Type', labelEs: 'Tipo' },
+    { key: 'description', label: 'Description', labelEs: 'Descripción', multiline: true },
+  ],
+  connection: [
+    { key: 'wireLabel', label: 'Wire Label', labelEs: 'Etiqueta del Cable' },
+    { key: 'from', label: 'From', labelEs: 'Desde' },
+    { key: 'to', label: 'To', labelEs: 'Hasta' },
+    { key: 'description', label: 'Description', labelEs: 'Descripción', multiline: true },
+  ],
+  summary: [{ key: 'summary', label: 'AI Summary', labelEs: 'Resumen AI', multiline: true }],
+};
+
+const EDIT_TITLES: Record<EditTarget['kind'], { en: string; es: string }> = {
+  wire: { en: 'Edit Wire', es: 'Editar Cable' },
+  component: { en: 'Edit Component', es: 'Editar Componente' },
+  connection: { en: 'Edit Connection', es: 'Editar Conexión' },
+  summary: { en: 'Edit AI Summary', es: 'Editar Resumen AI' },
+};
+
 export default function AnalyzeScreen() {
   const insets = useSafeAreaInsets();
   const params = useLocalSearchParams<{ imageUri?: string; imageUris?: string; schematicId?: string }>();
@@ -137,6 +184,9 @@ export default function AnalyzeScreen() {
   const [aiSuggestions, setAiSuggestions] = useState<string | null>(null);
   const [askingAi, setAskingAi] = useState(false);
   const [highlightKey, setHighlightKey] = useState<string | null>(null);
+  const [editTarget, setEditTarget] = useState<EditTarget | null>(null);
+  const [editValues, setEditValues] = useState<Record<string, string>>({});
+  const [savingEdit, setSavingEdit] = useState(false);
   const [uiPrefs, setUiPrefs] = useState(DEFAULT_UI_PREFERENCES);
   const [language, setLanguage] = useState<AppLanguage>('english');
   const es = isSpanish(language);
@@ -342,6 +392,132 @@ export default function AnalyzeScreen() {
 
   const toggleHighlight = (key: string) => {
     setHighlightKey((prev) => (prev === key ? null : key));
+  };
+
+  const openEditWire = (wire: WireInfo) => {
+    setEditTarget({ kind: 'wire', id: wire.id });
+    setEditValues({
+      label: wire.label || '',
+      color: wire.color || '',
+      fromPoint: wire.fromPoint || '',
+      toPoint: wire.toPoint || '',
+      voltage: wire.voltage || '',
+    });
+  };
+
+  const openEditComponent = (comp: ComponentInfo) => {
+    setEditTarget({ kind: 'component', id: comp.id });
+    setEditValues({
+      label: comp.label || '',
+      type: comp.type || '',
+      description: comp.description || '',
+    });
+  };
+
+  const openEditConnection = (conn: Connection) => {
+    setEditTarget({ kind: 'connection', id: conn.id });
+    setEditValues({
+      wireLabel: conn.wireLabel || '',
+      from: conn.from || '',
+      to: conn.to || '',
+      description: conn.description || '',
+    });
+  };
+
+  const openEditSummary = () => {
+    if (!schematic) return;
+    setEditTarget({ kind: 'summary' });
+    setEditValues({ summary: schematic.summary || '' });
+  };
+
+  const closeEdit = () => {
+    setEditTarget(null);
+    setEditValues({});
+  };
+
+  const handleSaveEdit = async () => {
+    if (!schematic || !editTarget) return;
+    setSavingEdit(true);
+    try {
+      let updated: SchematicAnalysis = schematic;
+
+      if (editTarget.kind === 'wire') {
+        const wires = schematic.wires.map((w) =>
+          w.id === editTarget.id
+            ? {
+                ...w,
+                label: editValues.label,
+                color: editValues.color || undefined,
+                fromPoint: editValues.fromPoint,
+                toPoint: editValues.toPoint,
+                voltage: editValues.voltage || undefined,
+              }
+            : w
+        );
+        updated = { ...schematic, wires, readingSteps: [] };
+      } else if (editTarget.kind === 'component') {
+        const components = schematic.components.map((c) =>
+          c.id === editTarget.id
+            ? { ...c, label: editValues.label, type: editValues.type, description: editValues.description }
+            : c
+        );
+        updated = { ...schematic, components, readingSteps: [] };
+      } else if (editTarget.kind === 'connection') {
+        const connections = schematic.connections.map((c) =>
+          c.id === editTarget.id
+            ? {
+                ...c,
+                wireLabel: editValues.wireLabel,
+                from: editValues.from,
+                to: editValues.to,
+                description: editValues.description,
+              }
+            : c
+        );
+        updated = { ...schematic, connections, readingSteps: [] };
+      } else if (editTarget.kind === 'summary') {
+        updated = { ...schematic, summary: editValues.summary, readingSteps: [] };
+      }
+
+      setSchematic(updated);
+      await saveSchematic(updated);
+      console.log('[Analyze] Edit saved', { kind: editTarget.kind });
+      closeEdit();
+    } catch (e) {
+      console.error('[Analyze] Failed to save edit', e);
+      Alert.alert(es ? 'Error al guardar' : 'Save failed', e instanceof Error ? e.message : String(e));
+    } finally {
+      setSavingEdit(false);
+    }
+  };
+
+  const handleDeleteEdit = async () => {
+    if (!schematic || !editTarget || editTarget.kind === 'summary') return;
+    setSavingEdit(true);
+    try {
+      let updated: SchematicAnalysis = schematic;
+
+      if (editTarget.kind === 'wire') {
+        const wires = schematic.wires.filter((w) => w.id !== editTarget.id);
+        updated = { ...schematic, wires, wireCount: wires.length, readingSteps: [] };
+      } else if (editTarget.kind === 'component') {
+        const components = schematic.components.filter((c) => c.id !== editTarget.id);
+        updated = { ...schematic, components, componentCount: components.length, readingSteps: [] };
+      } else if (editTarget.kind === 'connection') {
+        const connections = schematic.connections.filter((c) => c.id !== editTarget.id);
+        updated = { ...schematic, connections, readingSteps: [] };
+      }
+
+      setSchematic(updated);
+      await saveSchematic(updated);
+      console.log('[Analyze] Item deleted', { kind: editTarget.kind });
+      closeEdit();
+    } catch (e) {
+      console.error('[Analyze] Failed to delete item', e);
+      Alert.alert(es ? 'Error al eliminar' : 'Delete failed', e instanceof Error ? e.message : String(e));
+    } finally {
+      setSavingEdit(false);
+    }
   };
 
   const handleAskAi = async () => {
@@ -561,7 +737,12 @@ export default function AnalyzeScreen() {
             {/* AI Summary */}
             {schematic.summary ? (
               <View style={styles.summaryCard}>
-                <Text style={styles.summaryLabel}>{es ? 'Resumen AI' : 'AI Summary'}</Text>
+                <View style={styles.summaryHeader}>
+                  <Text style={styles.summaryLabel}>{es ? 'Resumen AI' : 'AI Summary'}</Text>
+                  <AnimatedPressable onPress={openEditSummary} style={styles.editIconBtn} scaleValue={0.9}>
+                    <Pencil size={14} color={WT.textSecondary} />
+                  </AnimatedPressable>
+                </View>
                 <Text style={styles.summaryText}>{schematic.summary}</Text>
               </View>
             ) : null}
@@ -614,7 +795,9 @@ export default function AnalyzeScreen() {
             <View style={styles.highlightHint}>
               <Highlighter size={15} color={WT.yellow} />
               <Text style={styles.highlightHintText}>
-                {es ? 'Toca cualquier cable, componente, conexión o símbolo desconocido para resaltarlo.' : 'Tap any wire, component, connection, or unknown symbol to highlight it.'}
+                {es
+                  ? 'Toca una fila para resaltarla, o el lápiz ✎ para corregir algo que la AI detectó mal.'
+                  : 'Tap a row to highlight it, or the pencil ✎ to correct anything the AI got wrong.'}
               </Text>
             </View>
 
@@ -658,6 +841,9 @@ export default function AnalyzeScreen() {
                       </View>
                     ) : null}
                     <ConfBadge confidence={wire.confidence} />
+                    <AnimatedPressable onPress={() => openEditWire(wire)} style={styles.editIconBtn} scaleValue={0.9}>
+                      <Pencil size={14} color={WT.textSecondary} />
+                    </AnimatedPressable>
                   </AnimatedPressable>
                 ))
               )}
@@ -697,6 +883,10 @@ export default function AnalyzeScreen() {
                         </Text>
                       </View>
                       <ConfBadge confidence={comp.confidence} />
+                      <View style={{ flex: 1 }} />
+                      <AnimatedPressable onPress={() => openEditComponent(comp)} style={styles.editIconBtn} scaleValue={0.9}>
+                        <Pencil size={14} color={WT.textSecondary} />
+                      </AnimatedPressable>
                     </View>
                     <Text style={[styles.componentDesc, isDark && styles.darkSecondaryText]} numberOfLines={isDark ? 4 : 2}>
                       {comp.description}
@@ -768,7 +958,13 @@ export default function AnalyzeScreen() {
                     style={[styles.connectionRow, highlightKey === `connection:${conn.id}` && styles.highlightedRow]}
                     scaleValue={0.99}
                   >
-                    <Text style={[styles.connectionWire, isDark && styles.darkPrimaryText]}>{conn.wireLabel}</Text>
+                    <View style={styles.connectionRowTop}>
+                      <Text style={[styles.connectionWire, isDark && styles.darkPrimaryText]}>{conn.wireLabel}</Text>
+                      <View style={{ flex: 1 }} />
+                      <AnimatedPressable onPress={() => openEditConnection(conn)} style={styles.editIconBtn} scaleValue={0.9}>
+                        <Pencil size={14} color={WT.textSecondary} />
+                      </AnimatedPressable>
+                    </View>
                     <Text style={[styles.connectionDesc, isDark && styles.darkSecondaryText]} numberOfLines={2}>
                       {conn.description}
                     </Text>
@@ -921,6 +1117,56 @@ export default function AnalyzeScreen() {
           </AnimatedPressable>
         </View>
       )}
+
+      {/* Edit / correction modal */}
+      <Modal visible={editTarget !== null} transparent animationType="fade" onRequestClose={closeEdit}>
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalCard}>
+            <View style={styles.modalHeader}>
+              <Text style={styles.modalTitle}>
+                {editTarget ? (es ? EDIT_TITLES[editTarget.kind].es : EDIT_TITLES[editTarget.kind].en) : ''}
+              </Text>
+              <AnimatedPressable onPress={closeEdit} style={styles.modalCloseBtn} scaleValue={0.9}>
+                <X size={20} color={WT.textSecondary} />
+              </AnimatedPressable>
+            </View>
+
+            <ScrollView style={styles.modalBody} keyboardShouldPersistTaps="handled">
+              {editTarget &&
+                EDIT_FIELDS[editTarget.kind].map((field) => (
+                  <View key={field.key} style={styles.modalField}>
+                    <Text style={styles.modalFieldLabel}>{es ? field.labelEs : field.label}</Text>
+                    <TextInput
+                      style={[styles.modalInput, field.multiline && styles.modalInputMultiline]}
+                      value={editValues[field.key] ?? ''}
+                      onChangeText={(t) => setEditValues((prev) => ({ ...prev, [field.key]: t }))}
+                      multiline={field.multiline}
+                      placeholderTextColor={WT.textTertiary}
+                    />
+                  </View>
+                ))}
+            </ScrollView>
+
+            <View style={styles.modalActions}>
+              {editTarget && editTarget.kind !== 'summary' && (
+                <AnimatedPressable onPress={handleDeleteEdit} style={styles.modalDeleteBtn} disabled={savingEdit} scaleValue={0.95}>
+                  <Trash2 size={16} color={WT.red} />
+                  <Text style={styles.modalDeleteText}>{es ? 'Eliminar' : 'Delete'}</Text>
+                </AnimatedPressable>
+              )}
+              <View style={{ flex: 1 }} />
+              <AnimatedPressable onPress={closeEdit} style={styles.modalCancelBtn} disabled={savingEdit} scaleValue={0.95}>
+                <Text style={styles.modalCancelText}>{es ? 'Cancelar' : 'Cancel'}</Text>
+              </AnimatedPressable>
+              <AnimatedPressable onPress={handleSaveEdit} style={styles.modalSaveBtn} disabled={savingEdit} scaleValue={0.95}>
+                <Text style={styles.modalSaveText}>
+                  {savingEdit ? (es ? 'Guardando...' : 'Saving...') : es ? 'Guardar' : 'Save'}
+                </Text>
+              </AnimatedPressable>
+            </View>
+          </View>
+        </View>
+      </Modal>
     </View>
   );
 }
@@ -1360,6 +1606,10 @@ const styles = StyleSheet.create({
     borderTopColor: WT.border,
     gap: 3,
   },
+  connectionRowTop: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
   connectionWire: {
     fontSize: 13,
     fontWeight: '600',
@@ -1523,6 +1773,11 @@ const styles = StyleSheet.create({
     borderLeftColor: WT.blue,
     gap: 6,
   },
+  summaryHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
   summaryLabel: {
     fontSize: 11,
     fontWeight: '700',
@@ -1566,5 +1821,117 @@ const styles = StyleSheet.create({
   },
   confBadgeTextLow: {
     color: WT.red,
+  },
+  editIconBtn: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: WT.bgCardAlt,
+  },
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.6)',
+    justifyContent: 'flex-end',
+  },
+  modalCard: {
+    backgroundColor: WT.bgCard,
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    maxHeight: '80%',
+    paddingBottom: 20,
+  },
+  modalHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 20,
+    paddingVertical: 16,
+    borderBottomWidth: 1,
+    borderBottomColor: WT.border,
+  },
+  modalTitle: {
+    fontSize: 17,
+    fontWeight: '700',
+    color: WT.textPrimary,
+  },
+  modalCloseBtn: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: WT.bgCardAlt,
+  },
+  modalBody: {
+    paddingHorizontal: 20,
+    paddingTop: 16,
+  },
+  modalField: {
+    gap: 6,
+    marginBottom: 16,
+  },
+  modalFieldLabel: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: WT.textSecondary,
+  },
+  modalInput: {
+    backgroundColor: WT.bgInput,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: WT.border,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    fontSize: 14,
+    color: WT.textPrimary,
+  },
+  modalInputMultiline: {
+    minHeight: 80,
+    textAlignVertical: 'top',
+  },
+  modalActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 20,
+    paddingTop: 12,
+    gap: 10,
+  },
+  modalDeleteBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    borderRadius: 10,
+    backgroundColor: WT.redMuted,
+  },
+  modalDeleteText: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: WT.red,
+  },
+  modalCancelBtn: {
+    paddingVertical: 10,
+    paddingHorizontal: 16,
+    borderRadius: 10,
+    backgroundColor: WT.bgCardAlt,
+  },
+  modalCancelText: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: WT.textSecondary,
+  },
+  modalSaveBtn: {
+    paddingVertical: 10,
+    paddingHorizontal: 20,
+    borderRadius: 10,
+    backgroundColor: WT.blue,
+  },
+  modalSaveText: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#FFFFFF',
   },
 });

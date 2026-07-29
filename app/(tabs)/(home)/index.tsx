@@ -1,5 +1,7 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
+  ActivityIndicator,
+  Alert,
   Animated,
   FlatList,
   Image,
@@ -11,11 +13,13 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { router, useFocusEffect } from 'expo-router';
-import { BookOpen, Camera, CircuitBoard, Clock, Settings, Zap } from 'lucide-react-native';
+import { BookOpen, Camera, CircuitBoard, Clock, Settings, Upload, Zap } from 'lucide-react-native';
 import { WT } from '@/constants/wiretrace';
 import { loadSchematics, SchematicAnalysis } from '@/utils/schematic-storage';
 import { AppLanguage, isSpanish, loadAppLanguage } from '@/utils/app-language';
 import CircuitBackground from '@/components/CircuitBackground';
+import { SchematicRasterizer, SchematicRasterizerHandle } from '@/components/SchematicRasterizer';
+import { convertFilesToImageUris, pickSchematicFiles, UnsupportedFileError } from '@/utils/file-import';
 
 function resolveImageSource(source: string | number | ImageSourcePropType | undefined): ImageSourcePropType {
   if (!source) return { uri: '' };
@@ -28,11 +32,13 @@ function AnimatedPressable({
   style,
   children,
   scaleValue = 0.97,
+  disabled,
 }: {
   onPress?: () => void;
   style?: object | object[];
   children: React.ReactNode;
   scaleValue?: number;
+  disabled?: boolean;
 }) {
   const scale = useRef(new Animated.Value(1)).current;
   const animIn = () =>
@@ -40,8 +46,8 @@ function AnimatedPressable({
   const animOut = () =>
     Animated.spring(scale, { toValue: 1, useNativeDriver: true, speed: 50, bounciness: 4 }).start();
   return (
-    <Animated.View style={{ transform: [{ scale }] }}>
-      <Pressable onPressIn={animIn} onPressOut={animOut} onPress={onPress} style={style}>
+    <Animated.View style={[{ transform: [{ scale }] }, disabled && { opacity: 0.6 }]}>
+      <Pressable onPressIn={animIn} onPressOut={animOut} onPress={onPress} disabled={disabled} style={style}>
         {children}
       </Pressable>
     </Animated.View>
@@ -128,7 +134,9 @@ export default function HomeScreen() {
   const insets = useSafeAreaInsets();
   const [schematics, setSchematics] = useState<SchematicAnalysis[]>([]);
   const [language, setLanguage] = useState<AppLanguage>('english');
+  const [uploading, setUploading] = useState(false);
   const scanScale = useRef(new Animated.Value(1)).current;
+  const rasterizerRef = useRef<SchematicRasterizerHandle>(null);
 
   useFocusEffect(
     useCallback(() => {
@@ -155,6 +163,43 @@ export default function HomeScreen() {
     router.push('/camera');
   };
 
+  const handleUpload = async () => {
+    console.log('[Home] Tapped Upload Schematic button');
+    if (uploading) return;
+    try {
+      const files = await pickSchematicFiles();
+      if (files.length === 0) return;
+
+      setUploading(true);
+      const rasterizer = rasterizerRef.current;
+      if (!rasterizer) throw new Error('Rasterizer not ready. Please try again.');
+
+      const imageUris = await convertFilesToImageUris(files, rasterizer);
+      if (imageUris.length === 0) {
+        throw new Error(es ? 'No se pudo extraer ninguna página del archivo.' : 'Could not extract any pages from the file.');
+      }
+
+      if (imageUris.length === 1) {
+        router.push({ pathname: '/analyze', params: { imageUri: imageUris[0] } });
+      } else {
+        router.push({ pathname: '/analyze', params: { imageUris: JSON.stringify(imageUris) } });
+      }
+    } catch (e) {
+      console.error('[Home] Upload failed', e);
+      const message =
+        e instanceof UnsupportedFileError
+          ? es
+            ? `Los archivos .${e.fileName.split('.').pop()} (DXF/DWG) aún no son compatibles. Usa PDF, SVG o una imagen.`
+            : `.${e.fileName.split('.').pop()} files (DXF/DWG) are not supported yet. Use a PDF, SVG, or image instead.`
+          : e instanceof Error
+          ? e.message
+          : String(e);
+      Alert.alert(es ? 'Error al subir' : 'Upload failed', message);
+    } finally {
+      setUploading(false);
+    }
+  };
+
   const handleSettings = () => {
     console.log('[Home] Tapped Settings button');
     router.push('/settings');
@@ -171,6 +216,7 @@ export default function HomeScreen() {
   return (
     <View style={styles.root}>
       <CircuitBackground />
+      <SchematicRasterizer ref={rasterizerRef} />
       <View style={styles.contentContainer}>
         {/* Header */}
         <View style={[styles.header, { paddingTop: topPad }]}>
@@ -200,6 +246,19 @@ export default function HomeScreen() {
                       </View>
                     </AnimatedPressable>
                   </Animated.View>
+
+                  {/* Upload Schematic quick-access */}
+                  <AnimatedPressable onPress={handleUpload} style={styles.uploadBtn} scaleValue={0.97} disabled={uploading}>
+                    {uploading ? (
+                      <ActivityIndicator size="small" color={WT.blue} />
+                    ) : (
+                      <Upload size={18} color={WT.blue} />
+                    )}
+                    <Text style={styles.dictBtnText}>
+                      {uploading ? (es ? 'Procesando...' : 'Processing...') : es ? 'Subir Esquema' : 'Upload Schematic'}
+                    </Text>
+                    <Text style={styles.dictBtnSub}>{es ? 'Imagen, PDF o SVG desde tu dispositivo' : 'Image, PDF, or SVG from your device'}</Text>
+                  </AnimatedPressable>
 
                   {/* Symbol Dictionary quick-access */}
                   <AnimatedPressable onPress={handleDictionary} style={styles.dictBtn} scaleValue={0.97}>
@@ -284,6 +343,7 @@ const styles = StyleSheet.create({
   heroSection: {
     paddingTop: 28,
     paddingBottom: 32,
+    gap: 12,
   },
   scanButton: {
     backgroundColor: WT.blue,
@@ -308,6 +368,16 @@ const styles = StyleSheet.create({
     fontWeight: '400',
   },
   dictBtn: {
+    backgroundColor: WT.bgCard,
+    borderRadius: 14,
+    padding: 16,
+    borderWidth: 1,
+    borderColor: WT.border,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+  },
+  uploadBtn: {
     backgroundColor: WT.bgCard,
     borderRadius: 14,
     padding: 16,

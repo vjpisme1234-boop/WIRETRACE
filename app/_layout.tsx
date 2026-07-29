@@ -19,10 +19,11 @@ import { WidgetProvider } from "@/contexts/WidgetContext";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
 // Note: Error logging is auto-initialized via index.ts import
 
-// Only wrap with ErrorBoundary in dev — production apps should not include it
-const DevErrorBoundary = __DEV__
-  ? ErrorBoundary
-  : ({ children }: { children: React.ReactNode }) => <>{children}</>;
+// Dev builds show the full technical trace; production shows a plain,
+// non-technical message with a reload action instead of hard-crashing.
+function DevErrorBoundary({ children }: { children: React.ReactNode }) {
+  return <ErrorBoundary mode={__DEV__ ? "debug" : "friendly"}>{children}</ErrorBoundary>;
+}
 
 // Prevent the splash screen from auto-hiding before asset loading is complete.
 SplashScreen.preventAutoHideAsync();

@@ -7,11 +7,17 @@
 
 import React, { Component, ReactNode } from "react";
 import { View, Text, Pressable, StyleSheet, ScrollView, Platform, SafeAreaView } from "react-native";
+import { router } from "expo-router";
+import { AlertTriangle } from "lucide-react-native";
+import { loadAppLanguage } from "@/utils/app-language";
 
 interface Props {
   children: ReactNode;
   fallback?: ReactNode;
   onError?: (error: Error, errorInfo: React.ErrorInfo) => void;
+  /** "debug" shows the full LogBox-style trace (dev only). "friendly" shows a
+   * plain, non-technical message with a reload action (production). */
+  mode?: "debug" | "friendly";
 }
 
 interface State {
@@ -19,6 +25,7 @@ interface State {
   error: Error | null;
   errorInfo: React.ErrorInfo | null;
   showTrace: boolean;
+  language: "english" | "spanish";
 }
 
 /** Extract a readable source location from a stack trace */
@@ -95,7 +102,14 @@ export class ErrorBoundary extends Component<Props, State> {
       error: null,
       errorInfo: null,
       showTrace: false,
+      language: "english",
     };
+  }
+
+  componentDidMount() {
+    loadAppLanguage()
+      .then((language) => this.setState({ language }))
+      .catch(() => {});
   }
 
   static getDerivedStateFromError(error: Error): Partial<State> {
@@ -135,6 +149,15 @@ export class ErrorBoundary extends Component<Props, State> {
     }
   };
 
+  /** Navigate home before clearing the error, so a screen whose bad data
+   * caused the crash doesn't immediately remount and crash again. */
+  handleFriendlyReset = () => {
+    try {
+      router.replace('/');
+    } catch {}
+    this.setState({ hasError: false, error: null, errorInfo: null, showTrace: false });
+  };
+
   toggleTrace = () => {
     this.setState((s) => ({ showTrace: !s.showTrace }));
   };
@@ -143,6 +166,31 @@ export class ErrorBoundary extends Component<Props, State> {
     if (this.state.hasError) {
       if (this.props.fallback) {
         return this.props.fallback;
+      }
+
+      if (this.props.mode === "friendly") {
+        const es = this.state.language === "spanish";
+        return (
+          <View style={friendlyStyles.root}>
+            <View style={friendlyStyles.iconCircle}>
+              <AlertTriangle size={32} color="#FF3B30" />
+            </View>
+            <Text style={friendlyStyles.title}>
+              {es ? 'Algo salió mal' : 'Something went wrong'}
+            </Text>
+            <Text style={friendlyStyles.message}>
+              {es
+                ? 'Esta acción produjo un resultado incompatible (posiblemente una respuesta inesperada de la AI). Toca Recargar para continuar.'
+                : "This action produced an incompatible result (possibly an unexpected AI response). Tap Reload to continue."}
+            </Text>
+            <Pressable
+              style={({ pressed }) => [friendlyStyles.button, pressed && friendlyStyles.buttonPressed]}
+              onPress={this.handleFriendlyReset}
+            >
+              <Text style={friendlyStyles.buttonText}>{es ? 'Recargar' : 'Reload'}</Text>
+            </Pressable>
+          </View>
+        );
       }
 
       const errorStack = this.state.error?.stack || "";
@@ -413,5 +461,53 @@ const styles = StyleSheet.create({
   },
   footerButtonTextPressed: {
     color: "white",
+  },
+});
+
+const friendlyStyles = StyleSheet.create({
+  root: {
+    flex: 1,
+    backgroundColor: "#0A0A0F",
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: 32,
+    gap: 16,
+  },
+  iconCircle: {
+    width: 72,
+    height: 72,
+    borderRadius: 36,
+    backgroundColor: "rgba(255,59,48,0.12)",
+    alignItems: "center",
+    justifyContent: "center",
+    marginBottom: 4,
+  },
+  title: {
+    color: "#FFFFFF",
+    fontSize: 20,
+    fontWeight: "700",
+    textAlign: "center",
+  },
+  message: {
+    color: "#8E8E93",
+    fontSize: 14,
+    lineHeight: 20,
+    textAlign: "center",
+    maxWidth: 320,
+  },
+  button: {
+    marginTop: 8,
+    backgroundColor: "#00B4FF",
+    borderRadius: 14,
+    paddingVertical: 14,
+    paddingHorizontal: 32,
+  },
+  buttonPressed: {
+    opacity: 0.85,
+  },
+  buttonText: {
+    color: "#FFFFFF",
+    fontSize: 16,
+    fontWeight: "700",
   },
 });

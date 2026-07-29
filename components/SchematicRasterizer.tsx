@@ -37,15 +37,23 @@ const RASTERIZER_HTML = `<!DOCTYPE html>
       var pdf = await pdfjsLib.getDocument({ data: bytes }).promise;
       var pages = [];
       var maxPages = Math.min(pdf.numPages, 20);
+      var TARGET_SCALE = 3.0;
+      var MAX_DIMENSION = 3500;
       for (var p = 1; p <= maxPages; p++) {
         var page = await pdf.getPage(p);
-        var viewport = page.getViewport({ scale: 2.0 });
+        var baseViewport = page.getViewport({ scale: 1.0 });
+        var scale = TARGET_SCALE;
+        var longestSide = Math.max(baseViewport.width, baseViewport.height) * scale;
+        if (longestSide > MAX_DIMENSION) {
+          scale = MAX_DIMENSION / Math.max(baseViewport.width, baseViewport.height);
+        }
+        var viewport = page.getViewport({ scale: scale });
         var canvas = document.createElement('canvas');
         canvas.width = viewport.width;
         canvas.height = viewport.height;
         var ctx = canvas.getContext('2d');
         await page.render({ canvasContext: ctx, viewport: viewport }).promise;
-        pages.push(canvas.toDataURL('image/jpeg', 0.9).split(',')[1]);
+        pages.push(canvas.toDataURL('image/jpeg', 0.92).split(',')[1]);
       }
       post({ requestId: requestId, type: 'result', pages: pages });
     } catch (e) {

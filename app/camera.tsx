@@ -375,6 +375,11 @@ export default function CameraScreen() {
         <Text style={styles.viewfinderHint}>
           {es ? 'Alinea el esquema dentro del marco • Usa buena iluminación' : 'Align schematic within frame • Ensure good lighting'}
         </Text>
+        <Text style={styles.accuracyHint}>
+          {es
+            ? 'La AI gratuita integrada puede tener menor precisión — agrega una clave paga en Ajustes para mejores resultados.'
+            : 'The free built-in AI may be less accurate — add a paid key in Settings for best results.'}
+        </Text>
       </View>
 
       {/* Pages accumulated badge */}
@@ -602,6 +607,13 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: 'rgba(255,255,255,0.65)',
     textAlign: 'center',
+  },
+  accuracyHint: {
+    fontSize: 11,
+    color: WT.yellow,
+    textAlign: 'center',
+    marginTop: 6,
+    paddingHorizontal: 24,
   },
   pagesBadge: {
     position: 'absolute',

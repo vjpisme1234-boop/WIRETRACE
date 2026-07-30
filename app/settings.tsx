@@ -218,6 +218,16 @@ export default function SettingsScreen() {
         contentContainerStyle={[styles.scrollContent, { paddingBottom: insets.bottom + 40 }]}
         showsVerticalScrollIndicator={false}
       >
+        {/* Free AI banner */}
+        <View style={styles.freeAiBanner}>
+          <Zap size={18} color={WT.green} fill={WT.green} />
+          <Text style={styles.freeAiBannerText}>
+            {es
+              ? 'WireTrace AI funciona de inmediato con una AI gratuita integrada (Google Gemini). La precisión al escanear esquemas es notablemente mejor con una clave paga (Claude recomendado) — agrega una abajo para los mejores resultados.'
+              : 'WireTrace AI works out of the box with a free built-in AI (Google Gemini). Scanning accuracy is noticeably better with a paid key (Claude recommended) — add one below for the best results.'}
+          </Text>
+        </View>
+
         {/* Anthropic API Key — recommended, shown first */}
         <View style={styles.section}>
           <View style={styles.sectionHeader}>
@@ -244,8 +254,8 @@ export default function SettingsScreen() {
           />
           <Text style={styles.fieldHint}>
             {es
-              ? 'Recomendado: Claude Sonnet 3.5. Para esta tarea suele ser mejor que versiones más nuevas de Claude — más preciso y más económico, con una retención densa de detalle estructural que algunas actualizaciones más nuevas y optimizadas para velocidad sacrifican a cambio de generar tokens más rápido.'
-              : "Recommended: Claude Sonnet 3.5. For this task, it's often better than even newer Claude updates — more accurate and cheaper, with dense structural detail retention that some newer, speed-optimized or heavily summarized model updates occasionally sacrifice for faster token generation."}
+              ? 'Recomendado: Claude Sonnet. A menudo la más precisa siguiendo instrucciones detalladas al leer esquemas técnicos.'
+              : 'Recommended: Claude Sonnet. Often the most accurate at following detailed instructions when reading technical schematics.'}
           </Text>
           <Text style={styles.fieldHint}>
             {es
@@ -473,7 +483,7 @@ export default function SettingsScreen() {
             <Text style={styles.sectionTitle}>{es ? 'Proveedor de Visión AI' : 'AI Vision Provider'}</Text>
           </View>
           <SegmentControl
-            options={['all', 'anthropic', 'openrouter', 'openai'] as VisionProviderPreference[]}
+            options={['all', 'anthropic', 'openrouter', 'openai', 'gemini'] as VisionProviderPreference[]}
             value={uiPrefs.visionProvider}
             onChange={(v) => {
               console.log('[Settings] Vision provider preference changed', { visionProvider: v });
@@ -481,14 +491,14 @@ export default function SettingsScreen() {
             }}
             labels={
               es
-                ? { all: 'Auto', anthropic: 'Claude', openrouter: 'OpenRouter', openai: 'OpenAI' }
-                : { all: 'Auto', anthropic: 'Claude', openrouter: 'OpenRouter', openai: 'OpenAI' }
+                ? { all: 'Auto', anthropic: 'Claude', openrouter: 'OpenRouter', openai: 'OpenAI', gemini: 'Gemini (gratis)' }
+                : { all: 'Auto', anthropic: 'Claude', openrouter: 'OpenRouter', openai: 'OpenAI', gemini: 'Gemini (free)' }
             }
           />
           <Text style={styles.fieldHint}>
             {es
-              ? 'Auto prueba Claude primero, luego tus otras claves configuradas. Un solo proveedor fuerza solo esa AI.'
-              : 'Auto tries Claude first, then your other configured keys. Single provider forces only that AI.'}
+              ? 'Auto prueba tus claves pagadas primero (Claude, luego las demás) y usa Gemini gratis como respaldo. Un solo proveedor fuerza solo esa AI.'
+              : 'Auto tries your paid keys first (Claude, then the others) and uses free Gemini as a fallback. Single provider forces only that AI.'}
           </Text>
         </View>
 
@@ -534,7 +544,7 @@ export default function SettingsScreen() {
             <View style={styles.aboutDivider} />
             <Text style={styles.aboutModel}>
               {es ? 'Modelo AI: ' : 'AI Model: '}
-              <Text style={styles.aboutModelName}>Claude Sonnet 3.5, OpenRouter, and OpenAI</Text>
+              <Text style={styles.aboutModelName}>Claude Sonnet, OpenRouter, OpenAI, and Google Gemini</Text>
             </Text>
             <Text style={styles.aboutPowered}>{es ? 'Impulsado por múltiples proveedores de visión' : 'Powered by multiple vision providers'}</Text>
           </View>
@@ -597,6 +607,22 @@ const styles = StyleSheet.create({
     fontSize: 11,
     fontWeight: '700',
     color: WT.blue,
+  },
+  freeAiBanner: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 10,
+    backgroundColor: WT.greenMuted,
+    borderRadius: 12,
+    padding: 14,
+    borderWidth: 1,
+    borderColor: 'rgba(52,199,89,0.25)',
+  },
+  freeAiBannerText: {
+    flex: 1,
+    fontSize: 13,
+    color: WT.textPrimary,
+    lineHeight: 19,
   },
   section: {
     gap: 10,

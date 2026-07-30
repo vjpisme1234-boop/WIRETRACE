@@ -5,7 +5,17 @@ import type { JunctionChoice } from '@/utils/schematic-graph';
 import { loadUIPreferences } from '@/utils/ui-preferences';
 
 const OPENAI_MODEL = process.env.EXPO_PUBLIC_OPENAI_MODEL || 'gpt-4o-mini';
-const ANTHROPIC_MODEL = process.env.EXPO_PUBLIC_ANTHROPIC_MODEL || 'claude-3-5-sonnet-20241022';
+const ANTHROPIC_MODEL = process.env.EXPO_PUBLIC_ANTHROPIC_MODEL || 'claude-sonnet-5';
+const GEMINI_MODEL = process.env.EXPO_PUBLIC_GEMINI_MODEL || 'gemini-2.5-flash';
+
+// Baked-in free Gemini key so the app works immediately after install (and
+// for App Store / Play Store reviewers) with no setup. Set at build time via
+// the EXPO_PUBLIC_GEMINI_DEFAULT_KEY env var (EAS secret for production
+// builds, .env for local dev) — never hardcode a real key directly in this
+// file, it ships in the compiled bundle. Free-tier accuracy on camera/scan
+// analysis is noticeably lower than the paid providers below — see the
+// in-app disclaimer on the Camera and Settings screens.
+const DEFAULT_GEMINI_KEY = (process.env.EXPO_PUBLIC_GEMINI_DEFAULT_KEY || '').trim();
 
 async function getApiKey(): Promise<string> {
   const stored = await SecureStore.getItemAsync(STORAGE_KEYS.API_KEY);
@@ -20,6 +30,10 @@ async function getOpenAIKey(): Promise<string> {
 async function getAnthropicKey(): Promise<string> {
   const stored = await SecureStore.getItemAsync(STORAGE_KEYS.ANTHROPIC_API_KEY);
   return stored ? stored.trim() : '';
+}
+
+async function getGeminiKey(): Promise<string> {
+  return DEFAULT_GEMINI_KEY;
 }
 
 function validateOpenRouterKeyFormat(apiKey: string): void {
@@ -103,6 +117,19 @@ async function callOpenAI(messages: ChatMessage[], maxTokens = 2048): Promise<st
   });
 }
 
+async function callGemini(messages: ChatMessage[], maxTokens = 2048): Promise<string> {
+  const apiKey = await getGeminiKey();
+  if (!apiKey) throw new Error('Gemini key is not configured.');
+  return callOpenAICompatible({
+    provider: 'Gemini',
+    url: 'https://generativelanguage.googleapis.com/v1beta/openai/chat/completions',
+    apiKey,
+    model: GEMINI_MODEL,
+    messages,
+    maxTokens,
+  });
+}
+
 function toAnthropicContent(content: ChatMessage['content']): any {
   if (typeof content === 'string') return content;
   return content.map((part) => {
@@ -169,22 +196,28 @@ function visionMessages(imageUrl: string, prompt: string, systemPrompt?: string)
   return systemPrompt ? [{ role: 'system', content: systemPrompt }, userMessage] : [userMessage];
 }
 
-type ProviderName = 'anthropic' | 'openrouter' | 'openai';
+type ProviderName = 'anthropic' | 'openrouter' | 'openai' | 'gemini';
 
 async function buildProviderAttempts(
   selectedProvider: string,
   run: (provider: ProviderName) => Promise<string>
 ): Promise<{ name: ProviderName; run: () => Promise<string> }[]> {
-  const [anthropicKey, openRouterKey, openAIKey] = await Promise.all([
+  const [anthropicKey, openRouterKey, openAIKey, geminiKey] = await Promise.all([
     getAnthropicKey(),
     getApiKey(),
     getOpenAIKey(),
+    getGeminiKey(),
   ]);
 
+  // Gemini (the free baked-in default) is listed last so paid keys are
+  // preferred automatically when present, with Gemini as the guaranteed
+  // floor — this is also what lets the app work out of the box for a fresh
+  // install or an app-store reviewer with no keys configured.
   const candidates: { name: ProviderName; key: string }[] = [
     { name: 'anthropic', key: anthropicKey },
     { name: 'openrouter', key: openRouterKey },
     { name: 'openai', key: openAIKey },
+    { name: 'gemini', key: geminiKey },
   ];
 
   return candidates
@@ -230,9 +263,10 @@ async function callVisionWithFallback(imageUrl: string, prompt: string, systemPr
       const messages = visionMessages(imageUrl, prompt, systemPrompt);
       if (provider === 'anthropic') return callAnthropic(messages, 4096);
       if (provider === 'openrouter') return callOpenRouter(messages, 4096);
-      return callOpenAI(messages, 2048);
+      if (provider === 'openai') return callOpenAI(messages, 2048);
+      return callGemini(messages, 2048);
     },
-    'No AI key configured. Add your Anthropic, OpenRouter, or OpenAI key in Settings.'
+    'No AI key configured. Add your Anthropic, OpenRouter, or OpenAI key in Settings, or check that the built-in Gemini key is configured.'
   );
 }
 
@@ -255,9 +289,10 @@ async function callMultiVisionWithFallback(imageUrls: string[], prompt: string, 
       const messages = visionMessagesMulti(imageUrls, prompt, systemPrompt);
       if (provider === 'anthropic') return callAnthropic(messages, maxTokens);
       if (provider === 'openrouter') return callOpenRouter(messages, maxTokens);
-      return callOpenAI(messages, maxTokens);
+      if (provider === 'openai') return callOpenAI(messages, maxTokens);
+      return callGemini(messages, maxTokens);
     },
-    'No AI key configured. Add your Anthropic, OpenRouter, or OpenAI key in Settings.'
+    'No AI key configured. Add your Anthropic, OpenRouter, or OpenAI key in Settings, or check that the built-in Gemini key is configured.'
   );
 }
 
@@ -268,9 +303,10 @@ async function callTextWithFallback(messages: ChatMessage[], maxTokens: number):
     (provider) => {
       if (provider === 'anthropic') return callAnthropic(messages, maxTokens);
       if (provider === 'openrouter') return callOpenRouter(messages, maxTokens);
-      return callOpenAI(messages, maxTokens);
+      if (provider === 'openai') return callOpenAI(messages, maxTokens);
+      return callGemini(messages, maxTokens);
     },
-    'No AI key configured. Add your Anthropic, OpenRouter, or OpenAI key in Settings.'
+    'No AI key configured. Add your Anthropic, OpenRouter, or OpenAI key in Settings, or check that the built-in Gemini key is configured.'
   );
 }
 

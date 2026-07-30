@@ -627,9 +627,11 @@ export default function AnalyzeScreen() {
       ? 'OpenRouter'
       : uiPrefs.visionProvider === 'openai'
       ? 'OpenAI'
+      : uiPrefs.visionProvider === 'gemini'
+      ? 'Gemini'
       : es
-      ? 'Automático (Claude → OpenRouter → OpenAI)'
-      : 'Auto (Claude → OpenRouter → OpenAI)';
+      ? 'Automático (Claude → OpenRouter → OpenAI → Gemini)'
+      : 'Auto (Claude → OpenRouter → OpenAI → Gemini)';
   const wireDisplayLimit = uiPrefs.layoutPreset === 'residential' ? 5 : uiPrefs.layoutPreset === 'commercial' ? 10 : 8;
   const connectionDisplayLimit = uiPrefs.layoutPreset === 'residential' ? 4 : uiPrefs.layoutPreset === 'commercial' ? 8 : 6;
 

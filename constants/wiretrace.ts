@@ -8,7 +8,6 @@ export const STORAGE_KEYS = {
   API_KEY: 'wiretrace_api_key',
   OPENAI_API_KEY: 'wiretrace_openai_api_key',
   ANTHROPIC_API_KEY: 'wiretrace_anthropic_api_key',
-  GROQ_API_KEY: 'wiretrace_groq_api_key',
   SETTINGS: 'wiretrace_settings',
   UI_PREFS: 'wiretrace_ui_prefs',
 } as const;

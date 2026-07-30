@@ -218,13 +218,39 @@ export default function SettingsScreen() {
         contentContainerStyle={[styles.scrollContent, { paddingBottom: insets.bottom + 40 }]}
         showsVerticalScrollIndicator={false}
       >
-        {/* Free AI banner */}
-        <View style={styles.freeAiBanner}>
-          <Zap size={18} color={WT.green} fill={WT.green} />
-          <Text style={styles.freeAiBannerText}>
+        {/* Anthropic API Key — recommended, shown first */}
+        <View style={styles.section}>
+          <View style={styles.sectionHeader}>
+            <Key size={16} color={WT.blue} />
+            <Text style={styles.sectionTitle}>{es ? 'Clave API de Anthropic (Claude)' : 'Anthropic (Claude) API Key'}</Text>
+            <View style={styles.recommendedBadge}>
+              <Text style={styles.recommendedBadgeText}>{es ? 'Recomendado' : 'Recommended'}</Text>
+            </View>
+          </View>
+          <Text style={styles.fieldLabel}>{es ? 'Clave API' : 'API Key'}</Text>
+          <TextInput
+            style={styles.apiKeyInput}
+            value={anthropicApiKey}
+            onChangeText={(t) => {
+              console.log('[Settings] Anthropic API key changed');
+              setAnthropicApiKey(t);
+            }}
+            placeholder="sk-ant-..."
+            placeholderTextColor={WT.textTertiary}
+            autoCapitalize="none"
+            autoCorrect={false}
+            secureTextEntry={true}
+            multiline={false}
+          />
+          <Text style={styles.fieldHint}>
             {es
-              ? 'WireTrace AI funciona de inmediato con una AI gratuita integrada (Groq). Agrega tus propias claves abajo para usar una AI de mayor calidad.'
-              : 'WireTrace AI works out of the box with a free built-in AI (Groq). Add your own keys below to use a higher-quality AI.'}
+              ? 'Recomendado: Claude Sonnet 3.5. Para esta tarea suele ser mejor que versiones más nuevas de Claude — más preciso y más económico, con una retención densa de detalle estructural que algunas actualizaciones más nuevas y optimizadas para velocidad sacrifican a cambio de generar tokens más rápido.'
+              : "Recommended: Claude Sonnet 3.5. For this task, it's often better than even newer Claude updates — more accurate and cheaper, with dense structural detail retention that some newer, speed-optimized or heavily summarized model updates occasionally sacrifice for faster token generation."}
+          </Text>
+          <Text style={styles.fieldHint}>
+            {es
+              ? '1) Ve a console.anthropic.com y crea una cuenta.  2) Ve a Billing y agrega crédito.  3) Ve a API Keys y crea una nueva clave.  4) Pega la clave arriba y toca Guardar.'
+              : '1) Go to console.anthropic.com and create an account.  2) Go to Billing and add credit.  3) Go to API Keys and create a new key.  4) Paste the key above and tap Save.'}
           </Text>
         </View>
 
@@ -291,39 +317,6 @@ export default function SettingsScreen() {
             {es
               ? '1) Ve a platform.openai.com y crea una cuenta.  2) Ve a Settings → Billing y agrega un método de pago.  3) Ve a API Keys y crea una nueva clave.  4) Pega la clave arriba y toca Guardar.'
               : '1) Go to platform.openai.com and create an account.  2) Go to Settings → Billing and add a payment method.  3) Go to API Keys and create a new key.  4) Paste the key above and tap Save.'}
-          </Text>
-        </View>
-
-        {/* Anthropic API Key */}
-        <View style={styles.section}>
-          <View style={styles.sectionHeader}>
-            <Key size={16} color={WT.blue} />
-            <Text style={styles.sectionTitle}>{es ? 'Clave API de Anthropic (Claude)' : 'Anthropic (Claude) API Key'}</Text>
-          </View>
-          <Text style={styles.fieldLabel}>{es ? 'Clave API' : 'API Key'}</Text>
-          <TextInput
-            style={styles.apiKeyInput}
-            value={anthropicApiKey}
-            onChangeText={(t) => {
-              console.log('[Settings] Anthropic API key changed');
-              setAnthropicApiKey(t);
-            }}
-            placeholder="sk-ant-..."
-            placeholderTextColor={WT.textTertiary}
-            autoCapitalize="none"
-            autoCorrect={false}
-            secureTextEntry={true}
-            multiline={false}
-          />
-          <Text style={styles.fieldHint}>
-            {es
-              ? 'Claude: a menudo la más precisa siguiendo instrucciones detalladas al leer esquemas.'
-              : "Claude: often the most accurate at following detailed instructions when reading schematics."}
-          </Text>
-          <Text style={styles.fieldHint}>
-            {es
-              ? '1) Ve a console.anthropic.com y crea una cuenta.  2) Ve a Billing y agrega crédito.  3) Ve a API Keys y crea una nueva clave.  4) Pega la clave arriba y toca Guardar.'
-              : '1) Go to console.anthropic.com and create an account.  2) Go to Billing and add credit.  3) Go to API Keys and create a new key.  4) Paste the key above and tap Save.'}
           </Text>
         </View>
 
@@ -480,7 +473,7 @@ export default function SettingsScreen() {
             <Text style={styles.sectionTitle}>{es ? 'Proveedor de Visión AI' : 'AI Vision Provider'}</Text>
           </View>
           <SegmentControl
-            options={['all', 'openrouter', 'anthropic', 'openai', 'groq'] as VisionProviderPreference[]}
+            options={['all', 'anthropic', 'openrouter', 'openai'] as VisionProviderPreference[]}
             value={uiPrefs.visionProvider}
             onChange={(v) => {
               console.log('[Settings] Vision provider preference changed', { visionProvider: v });
@@ -488,14 +481,14 @@ export default function SettingsScreen() {
             }}
             labels={
               es
-                ? { all: 'Auto', openrouter: 'OpenRouter', anthropic: 'Claude', openai: 'OpenAI', groq: 'Groq (gratis)' }
-                : { all: 'Auto', openrouter: 'OpenRouter', anthropic: 'Claude', openai: 'OpenAI', groq: 'Groq (free)' }
+                ? { all: 'Auto', anthropic: 'Claude', openrouter: 'OpenRouter', openai: 'OpenAI' }
+                : { all: 'Auto', anthropic: 'Claude', openrouter: 'OpenRouter', openai: 'OpenAI' }
             }
           />
           <Text style={styles.fieldHint}>
             {es
-              ? 'Auto usa tus claves pagadas primero y Groq gratis como respaldo. Un solo proveedor fuerza solo esa AI.'
-              : 'Auto uses your paid keys first and free Groq as a fallback. Single provider forces only that AI.'}
+              ? 'Auto prueba Claude primero, luego tus otras claves configuradas. Un solo proveedor fuerza solo esa AI.'
+              : 'Auto tries Claude first, then your other configured keys. Single provider forces only that AI.'}
           </Text>
         </View>
 
@@ -541,7 +534,7 @@ export default function SettingsScreen() {
             <View style={styles.aboutDivider} />
             <Text style={styles.aboutModel}>
               {es ? 'Modelo AI: ' : 'AI Model: '}
-              <Text style={styles.aboutModelName}>Claude Sonnet 4.5, OpenAI, and Groq</Text>
+              <Text style={styles.aboutModelName}>Claude Sonnet 3.5, OpenRouter, and OpenAI</Text>
             </Text>
             <Text style={styles.aboutPowered}>{es ? 'Impulsado por múltiples proveedores de visión' : 'Powered by multiple vision providers'}</Text>
           </View>
@@ -594,21 +587,16 @@ const styles = StyleSheet.create({
     padding: 20,
     gap: 20,
   },
-  freeAiBanner: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    gap: 10,
-    backgroundColor: WT.greenMuted,
-    borderRadius: 12,
-    padding: 14,
-    borderWidth: 1,
-    borderColor: 'rgba(52,199,89,0.25)',
+  recommendedBadge: {
+    backgroundColor: WT.blueMuted,
+    borderRadius: 8,
+    paddingHorizontal: 8,
+    paddingVertical: 2,
   },
-  freeAiBannerText: {
-    flex: 1,
-    fontSize: 13,
-    color: WT.textPrimary,
-    lineHeight: 19,
+  recommendedBadgeText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: WT.blue,
   },
   section: {
     gap: 10,

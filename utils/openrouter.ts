@@ -5,14 +5,7 @@ import type { JunctionChoice } from '@/utils/schematic-graph';
 import { loadUIPreferences } from '@/utils/ui-preferences';
 
 const OPENAI_MODEL = process.env.EXPO_PUBLIC_OPENAI_MODEL || 'gpt-4o-mini';
-const GROQ_MODEL = process.env.EXPO_PUBLIC_GROQ_MODEL || 'llama-3.2-11b-vision-preview';
-const ANTHROPIC_MODEL = process.env.EXPO_PUBLIC_ANTHROPIC_MODEL || 'claude-sonnet-4-5-20250929';
-
-// Baked-in free Groq key so the app works immediately after install with no
-// setup. Set at build time via the EXPO_PUBLIC_GROQ_DEFAULT_KEY env var
-// (EAS secret for production builds, .env for local dev) — never hardcode a
-// real key directly in this file, it ships in the compiled bundle.
-const DEFAULT_GROQ_KEY = (process.env.EXPO_PUBLIC_GROQ_DEFAULT_KEY || '').trim();
+const ANTHROPIC_MODEL = process.env.EXPO_PUBLIC_ANTHROPIC_MODEL || 'claude-3-5-sonnet-20241022';
 
 async function getApiKey(): Promise<string> {
   const stored = await SecureStore.getItemAsync(STORAGE_KEYS.API_KEY);
@@ -27,11 +20,6 @@ async function getOpenAIKey(): Promise<string> {
 async function getAnthropicKey(): Promise<string> {
   const stored = await SecureStore.getItemAsync(STORAGE_KEYS.ANTHROPIC_API_KEY);
   return stored ? stored.trim() : '';
-}
-
-async function getGroqKey(): Promise<string> {
-  const stored = await SecureStore.getItemAsync(STORAGE_KEYS.GROQ_API_KEY);
-  return stored ? stored.trim() : DEFAULT_GROQ_KEY;
 }
 
 function validateOpenRouterKeyFormat(apiKey: string): void {
@@ -115,19 +103,6 @@ async function callOpenAI(messages: ChatMessage[], maxTokens = 2048): Promise<st
   });
 }
 
-async function callGroq(messages: ChatMessage[], maxTokens = 2048): Promise<string> {
-  const apiKey = await getGroqKey();
-  if (!apiKey) throw new Error('Groq key is not configured.');
-  return callOpenAICompatible({
-    provider: 'Groq',
-    url: 'https://api.groq.com/openai/v1/chat/completions',
-    apiKey,
-    model: GROQ_MODEL,
-    messages,
-    maxTokens,
-  });
-}
-
 function toAnthropicContent(content: ChatMessage['content']): any {
   if (typeof content === 'string') return content;
   return content.map((part) => {
@@ -194,24 +169,22 @@ function visionMessages(imageUrl: string, prompt: string, systemPrompt?: string)
   return systemPrompt ? [{ role: 'system', content: systemPrompt }, userMessage] : [userMessage];
 }
 
-type ProviderName = 'openrouter' | 'anthropic' | 'openai' | 'groq';
+type ProviderName = 'anthropic' | 'openrouter' | 'openai';
 
 async function buildProviderAttempts(
   selectedProvider: string,
   run: (provider: ProviderName) => Promise<string>
 ): Promise<{ name: ProviderName; run: () => Promise<string> }[]> {
-  const [openRouterKey, anthropicKey, openAIKey, groqKey] = await Promise.all([
-    getApiKey(),
+  const [anthropicKey, openRouterKey, openAIKey] = await Promise.all([
     getAnthropicKey(),
+    getApiKey(),
     getOpenAIKey(),
-    getGroqKey(),
   ]);
 
   const candidates: { name: ProviderName; key: string }[] = [
-    { name: 'openrouter', key: openRouterKey },
     { name: 'anthropic', key: anthropicKey },
+    { name: 'openrouter', key: openRouterKey },
     { name: 'openai', key: openAIKey },
-    { name: 'groq', key: groqKey },
   ];
 
   return candidates
@@ -255,12 +228,11 @@ async function callVisionWithFallback(imageUrl: string, prompt: string, systemPr
     uiPrefs.visionProvider,
     (provider) => {
       const messages = visionMessages(imageUrl, prompt, systemPrompt);
-      if (provider === 'openrouter') return callOpenRouter(messages, 4096);
       if (provider === 'anthropic') return callAnthropic(messages, 4096);
-      if (provider === 'openai') return callOpenAI(messages, 2048);
-      return callGroq(messages, 2048);
+      if (provider === 'openrouter') return callOpenRouter(messages, 4096);
+      return callOpenAI(messages, 2048);
     },
-    'No AI key available. Either the built-in free Groq key was not configured at build time (set EXPO_PUBLIC_GROQ_DEFAULT_KEY), or add your own OpenRouter/OpenAI/Anthropic key in Settings.'
+    'No AI key configured. Add your Anthropic, OpenRouter, or OpenAI key in Settings.'
   );
 }
 
@@ -281,12 +253,11 @@ async function callMultiVisionWithFallback(imageUrls: string[], prompt: string, 
     uiPrefs.visionProvider,
     (provider) => {
       const messages = visionMessagesMulti(imageUrls, prompt, systemPrompt);
-      if (provider === 'openrouter') return callOpenRouter(messages, maxTokens);
       if (provider === 'anthropic') return callAnthropic(messages, maxTokens);
-      if (provider === 'openai') return callOpenAI(messages, maxTokens);
-      return callGroq(messages, maxTokens);
+      if (provider === 'openrouter') return callOpenRouter(messages, maxTokens);
+      return callOpenAI(messages, maxTokens);
     },
-    'No AI key available. Either the built-in free Groq key was not configured at build time (set EXPO_PUBLIC_GROQ_DEFAULT_KEY), or add your own OpenRouter/OpenAI/Anthropic key in Settings.'
+    'No AI key configured. Add your Anthropic, OpenRouter, or OpenAI key in Settings.'
   );
 }
 
@@ -295,12 +266,11 @@ async function callTextWithFallback(messages: ChatMessage[], maxTokens: number):
   return runWithFallback(
     uiPrefs.visionProvider,
     (provider) => {
-      if (provider === 'openrouter') return callOpenRouter(messages, maxTokens);
       if (provider === 'anthropic') return callAnthropic(messages, maxTokens);
-      if (provider === 'openai') return callOpenAI(messages, maxTokens);
-      return callGroq(messages, maxTokens);
+      if (provider === 'openrouter') return callOpenRouter(messages, maxTokens);
+      return callOpenAI(messages, maxTokens);
     },
-    'No AI key available. Either the built-in free Groq key was not configured at build time (set EXPO_PUBLIC_GROQ_DEFAULT_KEY), or add your own OpenRouter/OpenAI/Anthropic key in Settings.'
+    'No AI key configured. Add your Anthropic, OpenRouter, or OpenAI key in Settings.'
   );
 }
 

@@ -621,17 +621,15 @@ export default function AnalyzeScreen() {
   const isDark = uiPrefs.visualMode === 'dark';
   const isLightMode = uiPrefs.visualMode === 'normalLight';
   const activeVisionProviderLabel =
-    uiPrefs.visionProvider === 'openrouter'
-      ? 'OpenRouter'
-      : uiPrefs.visionProvider === 'anthropic'
+    uiPrefs.visionProvider === 'anthropic'
       ? 'Claude'
+      : uiPrefs.visionProvider === 'openrouter'
+      ? 'OpenRouter'
       : uiPrefs.visionProvider === 'openai'
       ? 'OpenAI'
-      : uiPrefs.visionProvider === 'groq'
-      ? 'Groq'
       : es
-      ? 'Automático (OpenRouter → Claude → OpenAI → Groq)'
-      : 'Auto (OpenRouter → Claude → OpenAI → Groq)';
+      ? 'Automático (Claude → OpenRouter → OpenAI)'
+      : 'Auto (Claude → OpenRouter → OpenAI)';
   const wireDisplayLimit = uiPrefs.layoutPreset === 'residential' ? 5 : uiPrefs.layoutPreset === 'commercial' ? 10 : 8;
   const connectionDisplayLimit = uiPrefs.layoutPreset === 'residential' ? 4 : uiPrefs.layoutPreset === 'commercial' ? 8 : 6;
 

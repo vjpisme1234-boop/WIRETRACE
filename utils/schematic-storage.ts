@@ -1,4 +1,5 @@
 import * as FileSystem from 'expo-file-system/legacy';
+import type { JunctionChoice } from '@/utils/schematic-graph';
 
 const SCHEMATICS_DIR = FileSystem.documentDirectory + 'schematics/';
 const INDEX_FILE = SCHEMATICS_DIR + '_index.json';
@@ -61,6 +62,12 @@ export interface SchematicAnalysis {
   connections: Connection[];
   unknownSymbols: UnknownSymbol[];
   readingSteps: ReadingStep[];
+  /** True when the AI could not identify an obvious starting point (no clear "Line 1"/L1). */
+  startPointAmbiguous?: boolean;
+  /** Set when step generation stopped at a branch the user hasn't resolved yet. */
+  pendingJunction?: JunctionChoice | null;
+  /** Path choices the user has made at branch terminals: terminal -> chosen "to". */
+  branchChoices?: Record<string, string>;
 }
 
 async function ensureDir(): Promise<void> {

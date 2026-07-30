@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Alert,
   Animated,
@@ -22,6 +22,7 @@ import {
   ChevronDown,
   ChevronUp,
   Cpu,
+  GitBranch,
   Highlighter,
   MessageSquare,
   Pencil,
@@ -35,7 +36,7 @@ import {
 } from 'lucide-react-native';
 import { WT } from '@/constants/wiretrace';
 import { AppLanguage, isSpanish, loadAppLanguage } from '@/utils/app-language';
-import { analyzeSchematic, analyzeMultipleImages, AnalysisResult } from '@/utils/openrouter';
+import { analyzeSchematic, analyzeMultipleImages, AnalysisResult, generateReadingSteps } from '@/utils/openrouter';
 import {
   generateSchematicName,
   getSchematic,
@@ -46,6 +47,7 @@ import {
   Connection,
   UnknownSymbol,
 } from '@/utils/schematic-storage';
+import { findJunctions, JunctionChoice } from '@/utils/schematic-graph';
 import { DEFAULT_UI_PREFERENCES, loadUIPreferences } from '@/utils/ui-preferences';
 
 function resolveImageSource(source: string | number | ImageSourcePropType | undefined): ImageSourcePropType {
@@ -175,7 +177,9 @@ export default function AnalyzeScreen() {
 
   const [direction, setDirection] = useState<ReadingDirection>('forward');
   const [startPoint, setStartPoint] = useState<StartPoint>('beginning');
+  const [startPointTouched, setStartPointTouched] = useState(false);
   const [specificStart, setSpecificStart] = useState('');
+  const [branchChoices, setBranchChoices] = useState<Record<string, string>>({});
   const [searchQuery, setSearchQuery] = useState('');
   const [showStartPicker, setShowStartPicker] = useState(false);
   const [generatingSteps, setGeneratingSteps] = useState(false);
@@ -330,7 +334,7 @@ export default function AnalyzeScreen() {
 
   const handleStartReading = async () => {
     if (!schematic) return;
-    console.log('[Analyze] Start Reading pressed', { direction, startPoint, specificStart });
+    console.log('[Analyze] Start Reading pressed', { direction, startPoint, specificStart, branchChoices });
 
     const startLabel =
       startPoint === 'beginning'
@@ -348,11 +352,21 @@ export default function AnalyzeScreen() {
       return;
     }
 
+    // No clear starting point and the user hasn't picked one — let the
+    // Reader ask by voice instead of silently guessing "Line 1".
+    if (schematic.startPointAmbiguous && !startPointTouched) {
+      console.log('[Analyze] Start point ambiguous and unresolved — deferring to voice prompt in Reader');
+      router.push({
+        pathname: '/reader',
+        params: { schematicId: schematic.id, direction, startLabel, needsStartPrompt: '1' },
+      });
+      return;
+    }
+
     setGeneratingSteps(true);
     console.log('[Analyze] Generating reading steps via OpenRouter');
     try {
-      const { generateReadingSteps } = await import('@/utils/openrouter');
-      const steps = await generateReadingSteps(
+      const { steps, pendingChoice } = await generateReadingSteps(
         {
           wires: schematic.wires,
           components: schematic.components,
@@ -361,10 +375,11 @@ export default function AnalyzeScreen() {
           summary: '',
         },
         direction,
-        startLabel
+        startLabel,
+        branchChoices
       );
 
-      const updated = { ...schematic, readingSteps: steps };
+      const updated = { ...schematic, readingSteps: steps, pendingJunction: pendingChoice, branchChoices };
       await saveSchematic(updated);
       setSchematic(updated);
 
@@ -586,6 +601,20 @@ export default function AnalyzeScreen() {
   const filteredItems = allItems.filter((item) =>
     item.toLowerCase().includes(searchQuery.toLowerCase())
   );
+
+  const junctions = useMemo(
+    () => (schematic ? findJunctions(schematic.connections) : []),
+    [schematic]
+  );
+
+  const toggleBranchChoice = (terminal: string, to: string) => {
+    setBranchChoices((prev) => {
+      const next = { ...prev };
+      if (next[terminal] === to) delete next[terminal];
+      else next[terminal] = to;
+      return next;
+    });
+  };
 
   const unknownCount = schematic?.unknownSymbols.filter((u) => !u.userIdentifiedAs).length ?? 0;
   const isHighContrast = uiPrefs.visualMode === 'highContrast';
@@ -980,6 +1009,18 @@ export default function AnalyzeScreen() {
               )}
             </View>
 
+            {/* Ambiguous start point warning */}
+            {schematic.startPointAmbiguous && (
+              <View style={styles.warningBanner}>
+                <AlertTriangle size={18} color={WT.yellow} />
+                <Text style={styles.warningText}>
+                  {es
+                    ? 'Este esquema no tiene un punto de inicio obvio (sin "Línea 1" clara). Elige "Cable/Componente Específico" abajo, o te preguntaremos por voz al comenzar la lectura.'
+                    : 'This schematic doesn\'t have an obvious starting point (no clear "Line 1"). Choose "Specific Wire/Component" below, or we\'ll ask you by voice when reading starts.'}
+                </Text>
+              </View>
+            )}
+
             {/* Reading Direction */}
             <View style={styles.card}>
               <Text style={styles.cardTitle}>{es ? 'Dirección de Lectura' : 'Reading Direction'}</Text>
@@ -1028,6 +1069,7 @@ export default function AnalyzeScreen() {
                       onPress={() => {
                         console.log('[Analyze] Start point selected', { opt });
                         setStartPoint(opt);
+                        setStartPointTouched(true);
                         if (opt === 'specific') setShowStartPicker(true);
                       }}
                       style={[styles.startOpt, startPoint === opt && styles.startOptActive]}
@@ -1093,6 +1135,52 @@ export default function AnalyzeScreen() {
                 </View>
               )}
             </View>
+
+            {/* Path Decisions — branch points detected in the wiring graph */}
+            {junctions.length > 0 && (
+              <View style={styles.card}>
+                <View style={styles.cardHeader}>
+                  <GitBranch size={16} color={WT.blue} />
+                  <Text style={styles.cardTitle}>{es ? 'Decisiones de Ruta' : 'Path Decisions'}</Text>
+                  <View style={styles.countBadge}>
+                    <Text style={styles.countBadgeText}>{junctions.length}</Text>
+                  </View>
+                </View>
+                <Text style={styles.aiHelperText}>
+                  {es
+                    ? 'El cableado se divide en estos puntos. Elige una dirección ahora, o déjalo sin elegir y te preguntaremos por voz al llegar ahí.'
+                    : 'The wiring splits at these points. Pick a direction now, or leave it unset and we\'ll ask by voice when reading gets there.'}
+                </Text>
+                {junctions.map((junction) => (
+                  <View key={junction.terminal} style={styles.junctionBlock}>
+                    <Text style={styles.junctionTerminal}>{junction.terminal}</Text>
+                    {junction.options.map((opt) => {
+                      const selected = branchChoices[junction.terminal] === opt.to;
+                      return (
+                        <AnimatedPressable
+                          key={opt.to}
+                          onPress={() => toggleBranchChoice(junction.terminal, opt.to)}
+                          style={[styles.junctionOpt, selected && styles.junctionOptActive]}
+                          scaleValue={0.98}
+                        >
+                          <View style={[styles.startOptRadio, selected && styles.startOptRadioActive]} />
+                          <View style={{ flex: 1 }}>
+                            <Text style={[styles.junctionOptWire, selected && styles.junctionOptWireActive]}>
+                              {es ? `Cable ${opt.wireLabel} → ${opt.to}` : `Wire ${opt.wireLabel} → ${opt.to}`}
+                            </Text>
+                            {opt.description ? (
+                              <Text style={styles.junctionOptDesc} numberOfLines={2}>
+                                {opt.description}
+                              </Text>
+                            ) : null}
+                          </View>
+                        </AnimatedPressable>
+                      );
+                    })}
+                  </View>
+                ))}
+              </View>
+            )}
           </>
         )}
       </ScrollView>
@@ -1682,6 +1770,46 @@ const styles = StyleSheet.create({
   startOptRadioActive: {
     borderColor: WT.blue,
     backgroundColor: WT.blue,
+  },
+  junctionBlock: {
+    gap: 6,
+    paddingTop: 10,
+    borderTopWidth: 1,
+    borderTopColor: WT.border,
+  },
+  junctionTerminal: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: WT.textSecondary,
+    fontFamily: 'SpaceMono',
+  },
+  junctionOpt: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 10,
+    paddingVertical: 8,
+    paddingHorizontal: 10,
+    borderRadius: 10,
+    backgroundColor: WT.bgCardAlt,
+    borderWidth: 1,
+    borderColor: WT.border,
+  },
+  junctionOptActive: {
+    backgroundColor: WT.blueMuted,
+    borderColor: WT.blue,
+  },
+  junctionOptWire: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: WT.textSecondary,
+  },
+  junctionOptWireActive: {
+    color: WT.blue,
+  },
+  junctionOptDesc: {
+    fontSize: 11,
+    color: WT.textTertiary,
+    marginTop: 2,
   },
   startOptText: {
     fontSize: 14,

@@ -19,8 +19,9 @@ import {
 } from 'lucide-react-native';
 import { ExpoSpeechRecognitionModule, useSpeechRecognitionEvent } from 'expo-speech-recognition';
 import { WT } from '@/constants/wiretrace';
-import { getSchematic, ReadingStep, SchematicAnalysis } from '@/utils/schematic-storage';
-import { answerSchematicQuestion } from '@/utils/openrouter';
+import { getSchematic, saveSchematic, ReadingStep, SchematicAnalysis } from '@/utils/schematic-storage';
+import { answerSchematicQuestion, continueReadingSteps, generateReadingSteps } from '@/utils/openrouter';
+import { JunctionChoice, JunctionOption, matchJunctionAnswer } from '@/utils/schematic-graph';
 import { loadTTSSettings, speakText, stopSpeech } from '@/utils/tts';
 import { DEFAULT_UI_PREFERENCES, loadUIPreferences } from '@/utils/ui-preferences';
 
@@ -85,7 +86,7 @@ function AnimatedPressable({
 
 export default function ReaderScreen() {
   const insets = useSafeAreaInsets();
-  const params = useLocalSearchParams<{ schematicId: string; direction: string; startLabel: string }>();
+  const params = useLocalSearchParams<{ schematicId: string; direction: string; startLabel: string; needsStartPrompt?: string }>();
 
   const [steps, setSteps] = useState<ReadingStep[]>([]);
   const [currentIndex, setCurrentIndex] = useState(0);
@@ -98,13 +99,16 @@ export default function ReaderScreen() {
   const [uiPrefs, setUiPrefs] = useState(DEFAULT_UI_PREFERENCES);
   const [schematicForHelp, setSchematicForHelp] = useState<SchematicAnalysis | null>(null);
   const [speechLanguage, setSpeechLanguage] = useState<'english' | 'spanish'>('english');
+  const [awaitingStartAnswer, setAwaitingStartAnswer] = useState(false);
+  const [pendingJunction, setPendingJunction] = useState<JunctionChoice | null>(null);
+  const [resolvingJunction, setResolvingJunction] = useState(false);
 
   const contentOpacity = useRef(new Animated.Value(0)).current;
   const contentTranslate = useRef(new Animated.Value(20)).current;
   const progressAnim = useRef(new Animated.Value(0)).current;
   const waitingForVoiceRef = useRef(false);
   const commandHandledRef = useRef(false);
-  const listeningModeRef = useRef<'command' | 'helpQuestion'>('command');
+  const listeningModeRef = useRef<'command' | 'helpQuestion' | 'startPrompt' | 'junctionPrompt'>('command');
 
   const animateIn = useCallback(() => {
     contentOpacity.setValue(0);
@@ -125,6 +129,14 @@ export default function ReaderScreen() {
         return;
       }
       setSchematicForHelp(schematic);
+      setPendingJunction(schematic.pendingJunction ?? null);
+
+      if (params.needsStartPrompt === '1' && schematic.readingSteps.length === 0) {
+        console.log('[Reader] Start point deferred — will ask by voice');
+        setLoading(false);
+        setAwaitingStartAnswer(true);
+        return;
+      }
 
       let stepsToUse = schematic.readingSteps;
       if (params.direction === 'backward') {
@@ -136,7 +148,7 @@ export default function ReaderScreen() {
       console.log('[Reader] Steps loaded', { count: stepsToUse.length });
     };
     load();
-  }, [params.direction, params.schematicId]);
+  }, [params.direction, params.needsStartPrompt, params.schematicId]);
 
   useFocusEffect(
     useCallback(() => {
@@ -185,7 +197,7 @@ export default function ReaderScreen() {
     }
   }, []);
 
-  const startVoiceListening = useCallback(async (mode: 'command' | 'helpQuestion' = 'command') => {
+  const startVoiceListening = useCallback(async (mode: 'command' | 'helpQuestion' | 'startPrompt' | 'junctionPrompt' = 'command') => {
     if (!voiceNextEnabled) return;
     if (!ExpoSpeechRecognitionModule.isRecognitionAvailable()) {
       setVoiceError('Voice recognition is unavailable on this device.');
@@ -205,9 +217,17 @@ export default function ReaderScreen() {
         ? speechLanguage === 'spanish'
           ? 'Escuchando... di "siguiente", "regresa", o "ayuda"'
           : 'Listening... say "next", "go back", or "help"'
+        : mode === 'helpQuestion'
+        ? speechLanguage === 'spanish'
+          ? 'Escuchando... dime qué necesitas'
+          : 'Listening... tell me what you need help with'
+        : mode === 'startPrompt'
+        ? speechLanguage === 'spanish'
+          ? 'Escuchando... di dónde empezar'
+          : 'Listening... say where to start'
         : speechLanguage === 'spanish'
-        ? 'Escuchando... dime qué necesitas'
-        : 'Listening... tell me what you need help with'
+        ? 'Escuchando... elige una dirección'
+        : 'Listening... choose a direction'
     );
     setListeningForVoice(true);
     waitingForVoiceRef.current = true;
@@ -218,11 +238,15 @@ export default function ReaderScreen() {
       continuous: true,
       maxAlternatives: 1,
       contextualStrings:
-        speechLanguage === 'spanish'
-          ? ['siguiente', 'continuar', 'regresa', 'atras', 'repite', 'ayuda']
-          : ['next', 'go next', 'continue', 'go back', 'previous', 'back', 'repeat', 'help'],
+        mode === 'command'
+          ? speechLanguage === 'spanish'
+            ? ['siguiente', 'continuar', 'regresa', 'atras', 'repite', 'ayuda']
+            : ['next', 'go next', 'continue', 'go back', 'previous', 'back', 'repeat', 'help']
+          : mode === 'junctionPrompt' && pendingJunction
+          ? pendingJunction.options.map((o) => o.wireLabel)
+          : undefined,
     });
-  }, [voiceNextEnabled, speechLanguage]);
+  }, [voiceNextEnabled, speechLanguage, pendingJunction]);
 
   const parseTranscript = (event: any): string => {
     const rawResults = Array.isArray(event?.results) ? event.results : [];
@@ -233,9 +257,164 @@ export default function ReaderScreen() {
     return '';
   };
 
+  const resolveStartPoint = useCallback(async (label: string) => {
+    if (!schematicForHelp) return;
+    setAwaitingStartAnswer(false);
+    setLoading(true);
+    setVoiceStatus(speechLanguage === 'spanish' ? 'Generando pasos...' : 'Generating steps...');
+    console.log('[Reader] Resolving deferred start point', { label });
+    try {
+      const dir: 'forward' | 'backward' = params.direction === 'backward' ? 'backward' : 'forward';
+      const { steps: newSteps, pendingChoice } = await generateReadingSteps(
+        {
+          wires: schematicForHelp.wires,
+          components: schematicForHelp.components,
+          connections: schematicForHelp.connections,
+          unknownSymbols: schematicForHelp.unknownSymbols,
+          summary: '',
+        },
+        dir,
+        label,
+        schematicForHelp.branchChoices
+      );
+
+      const updated: SchematicAnalysis = {
+        ...schematicForHelp,
+        readingSteps: newSteps,
+        pendingJunction: pendingChoice,
+        startPointAmbiguous: false,
+      };
+      await saveSchematic(updated);
+      setSchematicForHelp(updated);
+      setPendingJunction(pendingChoice);
+
+      let stepsToUse = newSteps;
+      if (dir === 'backward') {
+        stepsToUse = [...stepsToUse].reverse().map((s, i) => ({ ...s, stepNumber: i + 1 }));
+      }
+      setSteps(stepsToUse);
+      setCurrentIndex(0);
+    } catch (e) {
+      console.error('[Reader] Failed to generate steps from voice start point', e);
+      setVoiceError(
+        speechLanguage === 'spanish' ? 'No se pudieron generar los pasos.' : 'Failed to generate steps.'
+      );
+    } finally {
+      setLoading(false);
+    }
+  }, [schematicForHelp, params.direction, speechLanguage]);
+
+  const askForStartPoint = useCallback(async () => {
+    if (!schematicForHelp) return;
+    const question =
+      speechLanguage === 'spanish'
+        ? 'Este esquema no tiene un punto de inicio claro. Di el número de un cable o el nombre de un componente para empezar ahí, o di "principio" para usar el orden por defecto.'
+        : 'This schematic doesn\'t have a clear starting point. Say a wire number or component name to start there, or say "beginning" to use the default order.';
+
+    const canListen = voiceNextEnabled && ExpoSpeechRecognitionModule.isRecognitionAvailable();
+    if (!canListen) {
+      console.log('[Reader] Voice unavailable for start prompt — using default start label');
+      void resolveStartPoint(params.startLabel || 'Line 1');
+      return;
+    }
+
+    setVoiceStatus(speechLanguage === 'spanish' ? 'Preguntando punto de inicio...' : 'Asking for a starting point...');
+    await speakText(question, () => {
+      startVoiceListening('startPrompt');
+    });
+  }, [schematicForHelp, speechLanguage, voiceNextEnabled, params.startLabel, resolveStartPoint, startVoiceListening]);
+
+  const resolveJunctionChoice = useCallback(async (option: JunctionOption) => {
+    if (!schematicForHelp || !pendingJunction) return;
+    setResolvingJunction(true);
+    setVoiceStatus(speechLanguage === 'spanish' ? 'Continuando...' : 'Continuing...');
+    console.log('[Reader] Resolving junction', { terminal: pendingJunction.terminal, to: option.to });
+    try {
+      const dir: 'forward' | 'backward' = params.direction === 'backward' ? 'backward' : 'forward';
+      const priorGenerationOrderSteps = schematicForHelp.readingSteps;
+
+      const { steps: newSteps, pendingChoice } = await continueReadingSteps(
+        {
+          wires: schematicForHelp.wires,
+          components: schematicForHelp.components,
+          connections: schematicForHelp.connections,
+          unknownSymbols: schematicForHelp.unknownSymbols,
+          summary: '',
+        },
+        dir,
+        priorGenerationOrderSteps,
+        pendingJunction.terminal,
+        option.to
+      );
+
+      const updatedBranchChoices = { ...(schematicForHelp.branchChoices || {}), [pendingJunction.terminal]: option.to };
+      const updatedGenerationOrderSteps = [...priorGenerationOrderSteps, ...newSteps];
+      const updated: SchematicAnalysis = {
+        ...schematicForHelp,
+        readingSteps: updatedGenerationOrderSteps,
+        pendingJunction: pendingChoice,
+        branchChoices: updatedBranchChoices,
+      };
+      await saveSchematic(updated);
+      setSchematicForHelp(updated);
+      setPendingJunction(pendingChoice);
+
+      const newDisplaySteps = dir === 'backward' ? [...newSteps].reverse() : newSteps;
+      setSteps((prev) => {
+        const appended = [...prev, ...newDisplaySteps];
+        return appended.map((s, i) => ({ ...s, stepNumber: i + 1 }));
+      });
+      setCurrentIndex((i) => i + 1);
+    } catch (e) {
+      console.error('[Reader] Failed to continue reading steps', e);
+      setVoiceError(
+        speechLanguage === 'spanish'
+          ? 'No se pudo continuar. Toca el micro para intentar de nuevo.'
+          : 'Could not continue. Tap the mic to try again.'
+      );
+    } finally {
+      setResolvingJunction(false);
+    }
+  }, [schematicForHelp, pendingJunction, params.direction, speechLanguage]);
+
+  const askJunctionQuestion = useCallback(async () => {
+    if (!pendingJunction) return;
+    const ordinalsEn = ['first', 'second', 'third', 'fourth'];
+    const ordinalsEs = ['primera', 'segunda', 'tercera', 'cuarta'];
+    const optionsText = pendingJunction.options
+      .map((opt, i) => {
+        const ordinal = speechLanguage === 'spanish' ? ordinalsEs[i] || `${i + 1}` : ordinalsEn[i] || `${i + 1}`;
+        return speechLanguage === 'spanish'
+          ? `Opción ${ordinal}: cable ${opt.wireLabel} hacia ${opt.description || opt.to}`
+          : `Option ${ordinal}: wire ${opt.wireLabel} to ${opt.description || opt.to}`;
+      })
+      .join('. ');
+    const question =
+      speechLanguage === 'spanish'
+        ? `El camino se divide aquí. ${optionsText}. Di el número del cable, o di primera o segunda.`
+        : `The path splits here. ${optionsText}. Say the wire number, or say first or second.`;
+
+    const canListen = voiceNextEnabled && ExpoSpeechRecognitionModule.isRecognitionAvailable();
+    if (!canListen) {
+      console.log('[Reader] Voice unavailable for junction prompt — defaulting to first option');
+      if (pendingJunction.options[0]) void resolveJunctionChoice(pendingJunction.options[0]);
+      return;
+    }
+
+    setVoiceStatus(speechLanguage === 'spanish' ? 'Pregunta de ruta...' : 'Path question...');
+    await speakText(question, () => {
+      startVoiceListening('junctionPrompt');
+    });
+  }, [pendingJunction, speechLanguage, voiceNextEnabled, resolveJunctionChoice, startVoiceListening]);
+
   const handleNext = useCallback(() => {
     stopVoiceListening();
     if (currentIndex >= steps.length - 1) {
+      if (pendingJunction) {
+        console.log('[Reader] Reached pending junction — asking by voice');
+        void askJunctionQuestion();
+        return;
+      }
       console.log('[Reader] All steps complete');
       stopSpeech();
       setCompleted(true);
@@ -243,7 +422,7 @@ export default function ReaderScreen() {
     }
     console.log('[Reader] Next step pressed', { from: currentIndex, to: currentIndex + 1 });
     setCurrentIndex((i) => i + 1);
-  }, [currentIndex, steps.length, stopVoiceListening]);
+  }, [currentIndex, steps.length, stopVoiceListening, pendingJunction, askJunctionQuestion]);
 
   const handlePrev = useCallback(() => {
     stopVoiceListening();
@@ -326,6 +505,24 @@ export default function ReaderScreen() {
       return;
     }
 
+    if (listeningModeRef.current === 'startPrompt') {
+      if (transcript.length < 2) return;
+      commandHandledRef.current = true;
+      stopVoiceListening();
+      void resolveStartPoint(transcript);
+      return;
+    }
+
+    if (listeningModeRef.current === 'junctionPrompt') {
+      if (!pendingJunction) return;
+      const match = matchJunctionAnswer(transcript, pendingJunction);
+      if (!match) return;
+      commandHandledRef.current = true;
+      stopVoiceListening();
+      void resolveJunctionChoice(match);
+      return;
+    }
+
     const wantsNext =
       transcript.includes('next') ||
       transcript.includes('continue') ||
@@ -397,6 +594,23 @@ export default function ReaderScreen() {
     }
   }, [speechLanguage, voiceNextEnabled]);
 
+  // Ask by voice for a starting point once the schematic is ready
+  useEffect(() => {
+    if (!awaitingStartAnswer || !schematicForHelp) return;
+    void askForStartPoint();
+  }, [awaitingStartAnswer, schematicForHelp, askForStartPoint]);
+
+  // Safety net: if generation stopped at a junction before any step was
+  // produced (branch right at the start), ask immediately rather than
+  // showing a blank screen.
+  useEffect(() => {
+    if (loading || awaitingStartAnswer || resolvingJunction) return;
+    if (steps.length === 0 && pendingJunction) {
+      console.log('[Reader] No steps yet but a junction is pending — asking immediately');
+      void askJunctionQuestion();
+    }
+  }, [loading, awaitingStartAnswer, resolvingJunction, steps.length, pendingJunction, askJunctionQuestion]);
+
   // Speak current step when it changes
   useEffect(() => {
     if (steps.length === 0 || loading) return;
@@ -464,6 +678,25 @@ export default function ReaderScreen() {
     return (
       <View style={[styles.root, styles.centered]}>
         <Text style={styles.loadingText}>{speechLanguage === 'spanish' ? 'Cargando pasos...' : 'Loading steps...'}</Text>
+      </View>
+    );
+  }
+
+  if (awaitingStartAnswer || (steps.length === 0 && pendingJunction) || resolvingJunction) {
+    return (
+      <View style={[styles.root, styles.centered, { paddingTop: insets.top, paddingBottom: insets.bottom }]}>
+        <Mic size={32} color={listeningForVoice ? WT.green : WT.blue} />
+        <Text style={styles.loadingText}>{voiceStatus}</Text>
+        {voiceError ? <Text style={styles.voiceErrorText}>{voiceError}</Text> : null}
+        {!listeningForVoice && !resolvingJunction && voiceNextEnabled && (
+          <AnimatedPressable
+            onPress={() => (awaitingStartAnswer ? askForStartPoint() : askJunctionQuestion())}
+            style={styles.voiceRetryBtn}
+            scaleValue={0.9}
+          >
+            <Mic size={18} color={WT.blue} />
+          </AnimatedPressable>
+        )}
       </View>
     );
   }

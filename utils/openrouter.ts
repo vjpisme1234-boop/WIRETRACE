@@ -1,6 +1,7 @@
 import * as SecureStore from 'expo-secure-store';
 import { OPENROUTER_BASE_URL, OPENROUTER_MODEL, STORAGE_KEYS } from '@/constants/wiretrace';
 import type { ReadingStep } from '@/utils/schematic-storage';
+import type { JunctionChoice } from '@/utils/schematic-graph';
 import { loadUIPreferences } from '@/utils/ui-preferences';
 
 const OPENAI_MODEL = process.env.EXPO_PUBLIC_OPENAI_MODEL || 'gpt-4o-mini';
@@ -317,6 +318,7 @@ CRITICAL INSTRUCTIONS:
 5. If a symbol is UNRECOGNIZED, do NOT guess its type — add it to unknownSymbols with a description of its appearance and location (use normalized 0–1 coordinates for imageRegion).
 6. Include voltage level when identifiable from labels or context (e.g. "120VAC", "24VDC", "480VAC").
 7. WIRE COLOR — only set "color" when it is EXPLICITLY shown in the image: the wire itself is drawn/rendered in that color, or there is a printed color abbreviation next to it (e.g. "BLU", "RD", "BLK", "WHT", "GRN", "YEL", "ORG", "BRN", "VIO", "GRY"). NEVER infer or assume a color from voltage level, polarity (positive/negative), AC vs DC, or component type — a 24VDC or negative wire is NOT automatically blue, a 120VAC wire is NOT automatically red, etc. If no color is drawn or printed, omit the "color" field entirely rather than guessing.
+8. STARTING POINT — determine whether there is an unambiguous place to start reading (e.g. a wire/line explicitly labeled "1", "L1", a clearly marked power input, or a title block indicating a start). Set "startPointAmbiguous" to true if there is no such clear starting point (e.g. multiple plausible entry points, no numbering visible, a sheet that begins mid-circuit) — do NOT silently pick one and call it certain. Set it to false only when a start is genuinely obvious.
 
 RECOGNIZED COMPONENT TYPES (use these exact strings in "type"):
 resistor, capacitor, inductor, transformer, auto-transformer, current-transformer, potential-transformer,
@@ -348,7 +350,8 @@ Return ONLY a valid JSON object — NO markdown, NO code fences, NO comments:
   "components": [{ "id": "c1", "type": "relay", "label": "CR1", "description": "Control relay coil, 120VAC, 10A contacts", "isUnknown": false, "confidence": 0.98 }],
   "connections": [{ "id": "conn1", "from": "TB1-1", "to": "CR1-A1", "wireLabel": "14", "description": "Wire 14 from Terminal Block 1 pin 1 to Control Relay CR1 coil A1 (120VAC hot side)" }],
   "unknownSymbols": [{ "id": "u1", "description": "Upper-right quadrant: inverted triangle with horizontal line, possibly voltage reference or specialty sensor", "imageRegion": { "x": 0.75, "y": 0.1, "width": 0.1, "height": 0.08 } }],
-  "summary": "12-line 120VAC/24VDC motor control schematic for a conveyor. Contains 1 motor starter (M1), 3 control relays (CR1-CR3), 1 overload relay (OL1), 2 pushbuttons, and 24 wires."
+  "summary": "12-line 120VAC/24VDC motor control schematic for a conveyor. Contains 1 motor starter (M1), 3 control relays (CR1-CR3), 1 overload relay (OL1), 2 pushbuttons, and 24 wires.",
+  "startPointAmbiguous": false
 }`;
 
 // ---------------------------------------------------------------------------
@@ -361,6 +364,7 @@ export interface AnalysisResult {
   connections: { id: string; from: string; to: string; wireLabel: string; description: string }[];
   unknownSymbols: { id: string; description: string; imageRegion?: { x: number; y: number; width: number; height: number } }[];
   summary: string;
+  startPointAmbiguous?: boolean;
 }
 
 function parseJsonResult<T>(content: string, label: string): T {
@@ -419,14 +423,12 @@ export async function analyzeMultipleImages(base64Images: string[]): Promise<Ana
 // Step-by-step reading instructions
 // ---------------------------------------------------------------------------
 
-export async function generateReadingSteps(
-  analysis: AnalysisResult,
-  direction: 'forward' | 'backward',
-  startPoint: string
-): Promise<ReadingStep[]> {
-  console.log('[OpenRouter] generateReadingSteps called', { direction, startPoint });
+export interface ReadingStepsResult {
+  steps: ReadingStep[];
+  pendingChoice: JunctionChoice | null;
+}
 
-  const systemPrompt = `You are an experienced electrical journeyman reading wire schematics aloud to a helper or apprentice on a job site. Generate step-by-step spoken instructions that:
+const READING_STEPS_SYSTEM_PROMPT = `You are an experienced electrical journeyman reading wire schematics aloud to a helper or apprentice on a job site. Generate step-by-step spoken instructions that:
 1. Reference wire numbers exactly as labeled (e.g. "Wire 14", not "the wire")
 2. Give full terminal designations (e.g. "Terminal Block 1, pin 3" not "terminal 3")
 3. State voltage and circuit type when known (e.g. "This is a 120VAC control circuit")
@@ -434,22 +436,84 @@ export async function generateReadingSteps(
 5. For confidence < 0.7: add "Verify this identification — label may be unclear"
 6. Use natural, spoken English an electrician would say on site
 
-Return ONLY a valid JSON array — no markdown:
-[{ "id": "s1", "stepNumber": 1, "wireLabel": "14", "componentLabel": "CR1", "instruction": "Wire 14 leaves Terminal Block 1 at pin 1 and connects to Control Relay CR1 coil terminal A1 — this is the 120VAC hot side.", "detail": "Standard red-insulated control wire. Measure continuity before energizing.", "specialInstruction": "Verify CR1 coil is rated 120VAC before energizing." }]`;
+BRANCH POINTS: the connections data may include a terminal with more than one outgoing wire — a point where the path splits. If the user has pre-selected a path at that terminal (given below), follow it exactly and continue. If a split is reached that the user has NOT pre-selected, STOP generating further steps at that point — do not guess which wire to follow. Instead set "pendingChoice" describing the terminal and its available next wires, and leave "steps" ending at the last step before that split.
 
-  const userMessage = `Generate ${direction} reading steps starting at: ${startPoint}
+Return ONLY a valid JSON object — no markdown:
+{
+  "steps": [{ "id": "s1", "stepNumber": 1, "wireLabel": "14", "componentLabel": "CR1", "instruction": "Wire 14 leaves Terminal Block 1 at pin 1 and connects to Control Relay CR1 coil terminal A1 — this is the 120VAC hot side.", "detail": "Standard red-insulated control wire. Measure continuity before energizing.", "specialInstruction": "Verify CR1 coil is rated 120VAC before energizing." }],
+  "pendingChoice": null
+}
+Or, when stopping at an unresolved split:
+{
+  "steps": [...steps up to the split...],
+  "pendingChoice": { "terminal": "TB1-1", "options": [{ "to": "CR1-A1", "wireLabel": "14", "description": "To Control Relay CR1 coil A1" }, { "to": "M1-T1", "wireLabel": "22", "description": "To Motor M1 terminal T1" }] }
+}`;
+
+export async function generateReadingSteps(
+  analysis: AnalysisResult,
+  direction: 'forward' | 'backward',
+  startPoint: string,
+  branchChoices?: Record<string, string>
+): Promise<ReadingStepsResult> {
+  console.log('[OpenRouter] generateReadingSteps called', { direction, startPoint, branchChoices });
+
+  const branchChoicesText =
+    branchChoices && Object.keys(branchChoices).length > 0
+      ? `\n\nUser-selected path choices at branch terminals (terminal -> chosen next terminal), follow these exactly:\n${JSON.stringify(branchChoices)}`
+      : '';
+
+  const userMessage = `Generate ${direction} reading steps starting at: ${startPoint}${branchChoicesText}
 
 Schematic analysis:
 ${JSON.stringify(analysis)}`;
 
   const content = await callTextWithFallback([
-    { role: 'system', content: systemPrompt },
+    { role: 'system', content: READING_STEPS_SYSTEM_PROMPT },
     { role: 'user', content: userMessage },
   ], 4096);
 
-  const steps = parseJsonResult<ReadingStep[]>(content, 'generateReadingSteps');
-  console.log('[OpenRouter] generateReadingSteps parsed', { stepCount: steps.length });
-  return steps;
+  const result = parseJsonResult<ReadingStepsResult>(content, 'generateReadingSteps');
+  console.log('[OpenRouter] generateReadingSteps parsed', {
+    stepCount: result.steps?.length,
+    pendingChoice: !!result.pendingChoice,
+  });
+  return { steps: result.steps ?? [], pendingChoice: result.pendingChoice ?? null };
+}
+
+/**
+ * Continues a reading sequence after the user resolves a branch mid-session
+ * (via voice in the Reader). Only the new steps are returned — the caller
+ * appends them to the already-spoken steps rather than regenerating from
+ * scratch, so earlier wording never changes underneath the user.
+ */
+export async function continueReadingSteps(
+  analysis: AnalysisResult,
+  direction: 'forward' | 'backward',
+  priorSteps: ReadingStep[],
+  resolvedTerminal: string,
+  resolvedTo: string
+): Promise<ReadingStepsResult> {
+  console.log('[OpenRouter] continueReadingSteps called', { resolvedTerminal, resolvedTo });
+
+  const userMessage = `You already generated these ${direction} reading steps:
+${JSON.stringify(priorSteps)}
+
+The user just chose, at terminal ${resolvedTerminal}, to continue toward ${resolvedTo}. Continue the sequence from step ${priorSteps.length + 1} onward, following that path, in the same style as above. Do NOT repeat the steps already given — return only the NEW steps, with stepNumber continuing on from ${priorSteps.length + 1}. Stop again (with "pendingChoice") if you reach another unresolved split.
+
+Schematic analysis:
+${JSON.stringify(analysis)}`;
+
+  const content = await callTextWithFallback([
+    { role: 'system', content: READING_STEPS_SYSTEM_PROMPT },
+    { role: 'user', content: userMessage },
+  ], 4096);
+
+  const result = parseJsonResult<ReadingStepsResult>(content, 'continueReadingSteps');
+  console.log('[OpenRouter] continueReadingSteps parsed', {
+    stepCount: result.steps?.length,
+    pendingChoice: !!result.pendingChoice,
+  });
+  return { steps: result.steps ?? [], pendingChoice: result.pendingChoice ?? null };
 }
 
 // ---------------------------------------------------------------------------

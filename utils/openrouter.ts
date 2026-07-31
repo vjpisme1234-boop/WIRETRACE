@@ -276,8 +276,8 @@ async function callVisionWithFallback(imageUrl: string, prompt: string, systemPr
       const messages = visionMessages(imageUrl, prompt, systemPrompt);
       if (provider === 'anthropic') return callAnthropic(messages, 4096);
       if (provider === 'openrouter') return callOpenRouter(messages, 4096);
-      if (provider === 'openai') return callOpenAI(messages, 2048);
-      return callGeminiWithFreeScanLimit(messages, 2048);
+      if (provider === 'openai') return callOpenAI(messages, 4096);
+      return callGeminiWithFreeScanLimit(messages, 4096);
     },
     'No AI key configured. Add your Anthropic, OpenRouter, or OpenAI key in Settings, or check that the built-in Gemini key is configured.'
   );
@@ -391,7 +391,20 @@ function parseJsonResult<T>(content: string, label: string): T {
   try {
     return JSON.parse(cleaned) as T;
   } catch (e) {
-    console.error(`[OpenRouter] Failed to parse ${label} JSON`, e, cleaned.slice(0, 300));
+    // Model sometimes wraps the JSON in a sentence or two of commentary
+    // despite instructions not to — retry against just the outermost
+    // {...} span before giving up.
+    const start = cleaned.indexOf('{');
+    const end = cleaned.lastIndexOf('}');
+    if (start !== -1 && end > start) {
+      try {
+        return JSON.parse(cleaned.slice(start, end + 1)) as T;
+      } catch (e2) {
+        console.error(`[OpenRouter] Failed to parse ${label} JSON (retry)`, e2, cleaned.slice(0, 300));
+      }
+    } else {
+      console.error(`[OpenRouter] Failed to parse ${label} JSON`, e, cleaned.slice(0, 300));
+    }
     throw new Error(`AI returned malformed JSON for ${label}. Please try again.`);
   }
 }

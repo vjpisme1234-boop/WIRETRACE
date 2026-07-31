@@ -118,6 +118,7 @@ export default function SettingsScreen() {
   const [uiPrefs, setUiPrefs] = useState<UIPreferences>(DEFAULT_UI_PREFERENCES);
   const [saved, setSaved] = useState(false);
   const [testingVoice, setTestingVoice] = useState(false);
+  const hadAnyPaidKeyRef = useRef(false);
 
   useEffect(() => {
     const load = async () => {
@@ -132,6 +133,7 @@ export default function SettingsScreen() {
       if (storedKey) setApiKey(storedKey);
       if (storedOpenAIKey) setOpenAIApiKey(storedOpenAIKey);
       if (storedAnthropicKey) setAnthropicApiKey(storedAnthropicKey);
+      hadAnyPaidKeyRef.current = !!(storedKey || storedOpenAIKey || storedAnthropicKey);
       setSettings(ttsSettings);
       setUiPrefs(storedUiPrefs);
     };
@@ -144,6 +146,19 @@ export default function SettingsScreen() {
       const openRouterKey = apiKey.trim();
       const openAIKey = openAIApiKey.trim();
       const anthropicKey = anthropicApiKey.trim();
+      const hasAnyPaidKeyNow = !!(openRouterKey || openAIKey || anthropicKey);
+
+      // First time a paid key is added, upgrade off the "gemini" default so
+      // the new key actually gets used without the user having to also flip
+      // the provider selector themselves.
+      let nextUiPrefs = uiPrefs;
+      if (hasAnyPaidKeyNow && !hadAnyPaidKeyRef.current && uiPrefs.visionProvider === 'gemini') {
+        console.log('[Settings] First paid key added — switching vision provider to Auto');
+        nextUiPrefs = { ...uiPrefs, visionProvider: 'all' };
+        setUiPrefs(nextUiPrefs);
+      }
+      hadAnyPaidKeyRef.current = hasAnyPaidKeyNow;
+
       await Promise.all([
         openRouterKey
           ? SecureStore.setItemAsync(STORAGE_KEYS.API_KEY, openRouterKey)
@@ -155,7 +170,7 @@ export default function SettingsScreen() {
           ? SecureStore.setItemAsync(STORAGE_KEYS.ANTHROPIC_API_KEY, anthropicKey)
           : SecureStore.deleteItemAsync(STORAGE_KEYS.ANTHROPIC_API_KEY),
         saveTTSSettings(settings),
-        saveUIPreferences(uiPrefs),
+        saveUIPreferences(nextUiPrefs),
       ]);
       setSaved(true);
       setTimeout(() => setSaved(false), 2000);

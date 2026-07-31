@@ -14,7 +14,11 @@ export interface UIPreferences {
 export const DEFAULT_UI_PREFERENCES: UIPreferences = {
   visualMode: 'normalLight',
   layoutPreset: 'industrial',
-  visionProvider: 'all',
+  // Default to the free built-in provider explicitly, rather than "Auto",
+  // so a fresh install clearly shows an active provider instead of a vague
+  // "Auto" state that can read as "nothing is configured." Settings bumps
+  // this to 'all' automatically the first time a user adds a paid key.
+  visionProvider: 'gemini',
 };
 
 const LEGACY_VISUAL_MODE_MAP: Record<string, VisualMode> = {

@@ -578,7 +578,7 @@ export async function answerSchematicQuestion(
     },
     {
       role: 'user',
-      content: `Schematic analysis:\n${JSON.stringify(analysis, null, 2)}\n\nUser question:\n${question}`,
+      content: `Schematic analysis:\n${JSON.stringify(analysis)}\n\nUser question:\n${question}`,
     },
   ], 1800);
 

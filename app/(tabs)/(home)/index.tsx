@@ -6,14 +6,16 @@ import {
   FlatList,
   Image,
   ImageSourcePropType,
+  Modal,
   Pressable,
+  ScrollView,
   StyleSheet,
   Text,
   View,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { router, useFocusEffect } from 'expo-router';
-import { BookOpen, Camera, CircuitBoard, Clock, Settings, Upload, Zap } from 'lucide-react-native';
+import { BookOpen, Camera, CircuitBoard, Clock, Info, Settings, Upload, X } from 'lucide-react-native';
 import { WT } from '@/constants/wiretrace';
 import { loadSchematics, SchematicAnalysis } from '@/utils/schematic-storage';
 import { AppLanguage, isSpanish, loadAppLanguage } from '@/utils/app-language';
@@ -135,7 +137,9 @@ export default function HomeScreen() {
   const [schematics, setSchematics] = useState<SchematicAnalysis[]>([]);
   const [language, setLanguage] = useState<AppLanguage>('english');
   const [uploading, setUploading] = useState(false);
+  const [showUploadTip, setShowUploadTip] = useState(false);
   const scanScale = useRef(new Animated.Value(1)).current;
+  const logoPulse = useRef(new Animated.Value(0)).current;
   const rasterizerRef = useRef<SchematicRasterizerHandle>(null);
 
   useFocusEffect(
@@ -157,6 +161,21 @@ export default function HomeScreen() {
     pulse.start();
     return () => pulse.stop();
   }, [scanScale]);
+
+  // Pulsating "electricity" glow behind the header logo
+  useEffect(() => {
+    const glow = Animated.loop(
+      Animated.sequence([
+        Animated.timing(logoPulse, { toValue: 1, duration: 900, useNativeDriver: true }),
+        Animated.timing(logoPulse, { toValue: 0, duration: 900, useNativeDriver: true }),
+      ])
+    );
+    glow.start();
+    return () => glow.stop();
+  }, [logoPulse]);
+
+  const logoGlowScale = logoPulse.interpolate({ inputRange: [0, 1], outputRange: [0.85, 1.3] });
+  const logoGlowOpacity = logoPulse.interpolate({ inputRange: [0, 1], outputRange: [0.25, 0.7] });
 
   const handleScan = () => {
     console.log('[Home] Tapped Scan Schematic button');
@@ -221,7 +240,12 @@ export default function HomeScreen() {
         {/* Header */}
         <View style={[styles.header, { paddingTop: topPad }]}>
           <View style={styles.headerLeft}>
-            <Zap size={22} color={WT.blue} fill={WT.blue} />
+            <View style={styles.logoWrap}>
+              <Animated.View
+                style={[styles.logoGlow, { opacity: logoGlowOpacity, transform: [{ scale: logoGlowScale }] }]}
+              />
+              <Image source={require('@/assets/images/icon.png')} style={styles.logoImage} />
+            </View>
             <Text style={styles.headerTitle}>WireTrace AI</Text>
           </View>
           <AnimatedPressable onPress={handleSettings} style={styles.settingsBtn} scaleValue={0.9}>
@@ -240,7 +264,7 @@ export default function HomeScreen() {
                   <Animated.View style={{ transform: [{ scale: scanScale }] }}>
                     <AnimatedPressable onPress={handleScan} style={styles.scanButton} scaleValue={0.96}>
                       <View style={styles.scanButtonInner}>
-                        <Camera size={32} color="#FFFFFF" strokeWidth={2} />
+                        <Camera size={26} color="#FFFFFF" strokeWidth={2} />
                         <Text style={styles.scanButtonText}>{es ? 'Escanear Esquema' : 'Scan Schematic'}</Text>
                         <Text style={styles.scanButtonSub}>{es ? 'Apunta la cámara al diagrama de cableado' : 'Point camera at a wire diagram'}</Text>
                       </View>
@@ -252,17 +276,29 @@ export default function HomeScreen() {
                     {uploading ? (
                       <ActivityIndicator size="small" color={WT.blue} />
                     ) : (
-                      <Upload size={18} color={WT.blue} />
+                      <Upload size={15} color={WT.blue} />
                     )}
-                    <Text style={styles.dictBtnText}>
-                      {uploading ? (es ? 'Procesando...' : 'Processing...') : es ? 'Subir Esquema' : 'Upload Schematic'}
-                    </Text>
-                    <Text style={styles.dictBtnSub}>{es ? 'Imagen, PDF o SVG desde tu dispositivo' : 'Image, PDF, or SVG from your device'}</Text>
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.dictBtnText}>
+                        {uploading ? (es ? 'Procesando...' : 'Processing...') : es ? 'Subir Esquema' : 'Upload Schematic'}
+                      </Text>
+                      <Text style={styles.dictBtnSub}>{es ? 'Imagen, PDF o SVG desde tu dispositivo' : 'Image, PDF, or SVG from your device'}</Text>
+                    </View>
+                    <AnimatedPressable
+                      onPress={() => {
+                        console.log('[Home] Upload tip info pressed');
+                        setShowUploadTip(true);
+                      }}
+                      style={styles.uploadTipBtn}
+                      scaleValue={0.9}
+                    >
+                      <Info size={13} color={WT.textSecondary} />
+                    </AnimatedPressable>
                   </AnimatedPressable>
 
                   {/* Symbol Dictionary quick-access */}
                   <AnimatedPressable onPress={handleDictionary} style={styles.dictBtn} scaleValue={0.97}>
-                    <BookOpen size={18} color={WT.blue} />
+                    <BookOpen size={16} color={WT.blue} />
                     <Text style={styles.dictBtnText}>{es ? 'Diccionario de Símbolos' : 'Symbol Dictionary'}</Text>
                     <Text style={styles.dictBtnSub}>{es ? 'Guía de referencia para símbolos estándar' : 'Reference guide for all standard symbols'}</Text>
                   </AnimatedPressable>
@@ -299,6 +335,44 @@ export default function HomeScreen() {
           <Text style={styles.footerText}>{es ? 'Impulsado por Visión AI' : 'Powered by AI Vision'}</Text>
         </View>
       </View>
+
+      {/* Upload tip modal */}
+      <Modal visible={showUploadTip} transparent animationType="fade" onRequestClose={() => setShowUploadTip(false)}>
+        <View style={styles.tipOverlay}>
+          <View style={styles.tipCard}>
+            <View style={styles.tipHeader}>
+              <Text style={styles.tipTitle}>{es ? 'Mejores Resultados al Subir' : 'Get Better Scan Results'}</Text>
+              <AnimatedPressable onPress={() => setShowUploadTip(false)} style={styles.tipCloseBtn} scaleValue={0.9}>
+                <X size={20} color={WT.textSecondary} />
+              </AnimatedPressable>
+            </View>
+
+            <ScrollView style={styles.tipBody}>
+              <Text style={styles.tipIntro}>
+                {es
+                  ? 'Una foto normal de la cámara puede tener sombras, ángulo torcido o poco contraste, lo que dificulta que la AI lea el esquema. La app de escáner de tu teléfono corrige eso automáticamente y guarda un PDF limpio — sube ese PDF en vez de la foto para mejores resultados.'
+                  : "A plain camera photo can have shadows, a skewed angle, or low contrast, which makes it harder for the AI to read the schematic. Your phone's built-in scanner app corrects that automatically and saves a clean PDF — upload that PDF instead of the raw photo for better results."}
+              </Text>
+
+              <Text style={styles.tipPlatform}>{es ? 'En iPhone (app Notas)' : 'On iPhone (Notes app)'}</Text>
+              <Text style={styles.tipStep}>{es ? '1. Abre la app Notas y crea una nota nueva.' : '1. Open the Notes app and create a new note.'}</Text>
+              <Text style={styles.tipStep}>{es ? '2. Toca el ícono de cámara → "Escanear documentos".' : '2. Tap the camera icon → "Scan Documents".'}</Text>
+              <Text style={styles.tipStep}>{es ? '3. Captura el esquema; ajusta las esquinas si es necesario.' : '3. Capture the schematic; adjust the corners if needed.'}</Text>
+              <Text style={styles.tipStep}>{es ? '4. Toca Guardar, luego Compartir → Guardar en Archivos como PDF.' : '4. Tap Save, then Share → Save to Files as PDF.'}</Text>
+
+              <Text style={styles.tipPlatform}>{es ? 'En Android (Google Drive)' : 'On Android (Google Drive)'}</Text>
+              <Text style={styles.tipStep}>{es ? '1. Abre la app Google Drive.' : '1. Open the Google Drive app.'}</Text>
+              <Text style={styles.tipStep}>{es ? '2. Toca "+" → Escanear.' : '2. Tap "+" → Scan.'}</Text>
+              <Text style={styles.tipStep}>{es ? '3. Captura el esquema; recorta y ajusta si es necesario.' : '3. Capture the schematic; crop and adjust if needed.'}</Text>
+              <Text style={styles.tipStep}>{es ? '4. Guarda como PDF, luego súbelo aquí con "Subir Esquema".' : '4. Save as PDF, then upload it here with "Upload Schematic".'}</Text>
+            </ScrollView>
+
+            <AnimatedPressable onPress={() => setShowUploadTip(false)} style={styles.tipDoneBtn} scaleValue={0.97}>
+              <Text style={styles.tipDoneBtnText}>{es ? 'Entendido' : 'Got It'}</Text>
+            </AnimatedPressable>
+          </View>
+        </View>
+      </Modal>
     </View>
   );
 }
@@ -325,6 +399,24 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: 8,
   },
+  logoWrap: {
+    width: 30,
+    height: 30,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  logoGlow: {
+    position: 'absolute',
+    width: 30,
+    height: 30,
+    borderRadius: 9,
+    backgroundColor: WT.blue,
+  },
+  logoImage: {
+    width: 26,
+    height: 26,
+    borderRadius: 7,
+  },
   headerTitle: {
     fontSize: 22,
     fontWeight: '700',
@@ -341,60 +433,62 @@ const styles = StyleSheet.create({
     paddingHorizontal: 20,
   },
   heroSection: {
-    paddingTop: 28,
-    paddingBottom: 32,
-    gap: 12,
+    paddingTop: 22,
+    paddingBottom: 24,
+    gap: 8,
   },
   scanButton: {
     backgroundColor: WT.blue,
-    borderRadius: 20,
+    borderRadius: 18,
     overflow: 'hidden',
   },
   scanButtonInner: {
-    paddingVertical: 32,
-    paddingHorizontal: 24,
+    paddingVertical: 22,
+    paddingHorizontal: 20,
     alignItems: 'center',
-    gap: 10,
+    gap: 7,
   },
   scanButtonText: {
-    fontSize: 22,
+    fontSize: 18,
     fontWeight: '700',
     color: '#FFFFFF',
     letterSpacing: -0.3,
   },
   scanButtonSub: {
-    fontSize: 14,
+    fontSize: 12,
     color: 'rgba(255,255,255,0.75)',
     fontWeight: '400',
   },
   dictBtn: {
     backgroundColor: WT.bgCard,
-    borderRadius: 14,
-    padding: 16,
+    borderRadius: 12,
+    paddingVertical: 12,
+    paddingHorizontal: 14,
     borderWidth: 1,
     borderColor: WT.border,
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 12,
+    gap: 10,
   },
   uploadBtn: {
     backgroundColor: WT.bgCard,
-    borderRadius: 14,
-    padding: 16,
+    borderRadius: 12,
+    paddingVertical: 9,
+    paddingHorizontal: 12,
     borderWidth: 1,
     borderColor: WT.border,
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 12,
+    gap: 9,
   },
   dictBtnText: {
-    fontSize: 15,
+    fontSize: 13,
     fontWeight: '600',
     color: WT.textPrimary,
     flex: 1,
   },
   dictBtnSub: {
-    fontSize: 12,
+    fontSize: 10.5,
     color: WT.textSecondary,
   },
   sectionHeader: {
@@ -534,5 +628,85 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: WT.textTertiary,
     letterSpacing: 0.3,
+  },
+  uploadTipBtn: {
+    width: 22,
+    height: 22,
+    borderRadius: 11,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: WT.bgCardAlt,
+  },
+  tipOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.6)',
+    justifyContent: 'flex-end',
+  },
+  tipCard: {
+    backgroundColor: WT.bgCard,
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    maxHeight: '80%',
+    paddingBottom: 20,
+  },
+  tipHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 20,
+    paddingVertical: 16,
+    borderBottomWidth: 1,
+    borderBottomColor: WT.border,
+  },
+  tipTitle: {
+    fontSize: 17,
+    fontWeight: '700',
+    color: WT.textPrimary,
+  },
+  tipCloseBtn: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: WT.bgCardAlt,
+  },
+  tipBody: {
+    paddingHorizontal: 20,
+    paddingTop: 16,
+    maxHeight: 380,
+  },
+  tipIntro: {
+    fontSize: 14,
+    color: WT.textSecondary,
+    lineHeight: 20,
+    marginBottom: 20,
+  },
+  tipPlatform: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: WT.blue,
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+    marginBottom: 8,
+  },
+  tipStep: {
+    fontSize: 14,
+    color: WT.textPrimary,
+    lineHeight: 21,
+    marginBottom: 6,
+  },
+  tipDoneBtn: {
+    marginTop: 16,
+    marginHorizontal: 20,
+    backgroundColor: WT.blue,
+    borderRadius: 14,
+    paddingVertical: 14,
+    alignItems: 'center',
+  },
+  tipDoneBtnText: {
+    fontSize: 15,
+    fontWeight: '700',
+    color: '#FFFFFF',
   },
 });

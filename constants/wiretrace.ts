@@ -10,6 +10,7 @@ export const STORAGE_KEYS = {
   ANTHROPIC_API_KEY: 'wiretrace_anthropic_api_key',
   SETTINGS: 'wiretrace_settings',
   UI_PREFS: 'wiretrace_ui_prefs',
+  FREE_SCAN_COUNT: 'wiretrace_free_scan_count',
 } as const;
 
 export const WT = {

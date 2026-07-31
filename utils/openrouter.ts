@@ -3,6 +3,7 @@ import { OPENROUTER_BASE_URL, OPENROUTER_MODEL, STORAGE_KEYS } from '@/constants
 import type { ReadingStep } from '@/utils/schematic-storage';
 import type { JunctionChoice } from '@/utils/schematic-graph';
 import { loadUIPreferences } from '@/utils/ui-preferences';
+import { FREE_SCAN_LIMIT, getRemainingFreeScans, incrementFreeScanCount } from '@/utils/free-scan-limit';
 
 const OPENAI_MODEL = process.env.EXPO_PUBLIC_OPENAI_MODEL || 'gpt-4o-mini';
 const ANTHROPIC_MODEL = process.env.EXPO_PUBLIC_ANTHROPIC_MODEL || 'claude-sonnet-5';
@@ -255,6 +256,18 @@ async function runWithFallback(
   throw new Error(`All AI providers failed. ${errors.join(' | ')}`);
 }
 
+async function callGeminiWithFreeScanLimit(messages: ChatMessage[], maxTokens: number): Promise<string> {
+  const remaining = await getRemainingFreeScans();
+  if (remaining <= 0) {
+    throw new Error(
+      `You've used all ${FREE_SCAN_LIMIT} free scans on the built-in AI for this install. Add your own Anthropic, OpenRouter, or OpenAI key in Settings to keep scanning.`
+    );
+  }
+  const result = await callGemini(messages, maxTokens);
+  await incrementFreeScanCount();
+  return result;
+}
+
 async function callVisionWithFallback(imageUrl: string, prompt: string, systemPrompt?: string): Promise<string> {
   const uiPrefs = await loadUIPreferences();
   return runWithFallback(
@@ -264,7 +277,7 @@ async function callVisionWithFallback(imageUrl: string, prompt: string, systemPr
       if (provider === 'anthropic') return callAnthropic(messages, 4096);
       if (provider === 'openrouter') return callOpenRouter(messages, 4096);
       if (provider === 'openai') return callOpenAI(messages, 2048);
-      return callGemini(messages, 2048);
+      return callGeminiWithFreeScanLimit(messages, 2048);
     },
     'No AI key configured. Add your Anthropic, OpenRouter, or OpenAI key in Settings, or check that the built-in Gemini key is configured.'
   );
@@ -290,7 +303,7 @@ async function callMultiVisionWithFallback(imageUrls: string[], prompt: string, 
       if (provider === 'anthropic') return callAnthropic(messages, maxTokens);
       if (provider === 'openrouter') return callOpenRouter(messages, maxTokens);
       if (provider === 'openai') return callOpenAI(messages, maxTokens);
-      return callGemini(messages, maxTokens);
+      return callGeminiWithFreeScanLimit(messages, maxTokens);
     },
     'No AI key configured. Add your Anthropic, OpenRouter, or OpenAI key in Settings, or check that the built-in Gemini key is configured.'
   );

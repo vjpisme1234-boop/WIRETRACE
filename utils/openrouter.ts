@@ -6,7 +6,7 @@ import { loadUIPreferences } from '@/utils/ui-preferences';
 
 const OPENAI_MODEL = process.env.EXPO_PUBLIC_OPENAI_MODEL || 'gpt-4o-mini';
 const ANTHROPIC_MODEL = process.env.EXPO_PUBLIC_ANTHROPIC_MODEL || 'claude-sonnet-5';
-const GEMINI_MODEL = process.env.EXPO_PUBLIC_GEMINI_MODEL || 'gemini-2.5-flash';
+const GEMINI_MODEL = process.env.EXPO_PUBLIC_GEMINI_MODEL || 'gemini-3.6-flash';
 
 // Baked-in free Gemini key so the app works immediately after install (and
 // for App Store / Play Store reviewers) with no setup. Set at build time via

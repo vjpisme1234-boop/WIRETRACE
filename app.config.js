@@ -14,7 +14,7 @@ module.exports = {
     },
     ios: {
       supportsTablet: true,
-      bundleIdentifier: "com.vjpisme1234.wiretraceai",
+      bundleIdentifier: "com.vjpisme-wiretrace",
       infoPlist: {
         NSCameraUsageDescription:
           "WireTrace AI needs camera access to photograph wire schematics for analysis.",
@@ -31,7 +31,7 @@ module.exports = {
         foregroundImage: "./assets/images/icon.png",
         backgroundColor: "#FFFFFF",
       },
-      package: "com.vjpisme1234.wiretraceai",
+      package: "com.vjpisme_wiretrace",
       versionCode: 5,
       permissions: [
         "android.permission.CAMERA",

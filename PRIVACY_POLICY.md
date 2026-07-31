@@ -1,6 +1,6 @@
 # Privacy Policy for WireTrace AI
 
-**Last updated: July 29, 2026**
+**Last updated: July 30, 2026**
 
 This Privacy Policy describes how WireTrace AI ("the App", "we", "us") handles information when you use the app. WireTrace AI is a tool for electricians and technicians to photograph or upload wire schematics and receive AI-generated readings, step-by-step guidance, and voice-assisted navigation.
 
@@ -10,18 +10,19 @@ This Privacy Policy describes how WireTrace AI ("the App", "we", "us") handles i
 
 **Voice audio.** If you use voice commands during guided reading (e.g. saying "next," "go back," "help," or answering a question about where to start), your microphone audio is processed by your device's speech-recognition system to convert it to text. We do not record or store audio recordings.
 
-**API keys.** If you add your own API key for OpenRouter, OpenAI, or Anthropic in Settings, that key is stored only in your device's secure credential storage (iOS Keychain / Android Keystore). We never see, transmit, or store your API keys on any server we operate.
+**API keys.** If you add your own API key for Anthropic, OpenRouter, or OpenAI in Settings, that key is stored only in your device's secure credential storage (iOS Keychain / Android Keystore). We never see, transmit, or store your API keys on any server we operate.
 
 **Schematic data.** Analysis results (wires, components, connections, reading steps, and the schematic image) are stored locally on your device only. We do not operate a server that stores this data, and we cannot access it.
 
 ## How Information Is Used
 
-Photos, uploaded files, and related text (such as questions you ask the in-app AI assistant) are sent to whichever third-party AI provider you have configured a key for — Anthropic, OpenRouter, and/or OpenAI — solely to generate the schematic analysis, reading steps, and answers you request. We do not use this content for any other purpose, and we do not sell or share it with anyone beyond the AI provider necessary to fulfill your request.
+Photos, uploaded files, and related text (such as questions you ask the in-app AI assistant) are sent to whichever AI provider is active for your request — Anthropic, OpenRouter, and/or OpenAI if you've added your own key, or Google Gemini via a limited free key built into the app so it works out of the box with no setup — solely to generate the schematic analysis, reading steps, and answers you request. We do not use this content for any other purpose, and we do not sell or share it with anyone beyond the AI provider necessary to fulfill your request.
 
 Each AI provider processes this data under its own privacy policy:
 - Anthropic: https://www.anthropic.com/privacy
 - OpenRouter: https://openrouter.ai/privacy
 - OpenAI: https://openai.com/privacy
+- Google (Gemini): https://policies.google.com/privacy
 
 ## Data Storage and Retention
 

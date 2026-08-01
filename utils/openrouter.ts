@@ -4,6 +4,8 @@ import type { ReadingStep } from '@/utils/schematic-storage';
 import type { JunctionChoice } from '@/utils/schematic-graph';
 import { loadUIPreferences } from '@/utils/ui-preferences';
 import { FREE_SCAN_LIMIT, getRemainingFreeScans, incrementFreeScanCount } from '@/utils/free-scan-limit';
+import { validateAnalysisConsistency } from '@/utils/schematic-validation';
+import { salvagePartialAnalysis } from '@/utils/partial-json';
 
 const OPENAI_MODEL = process.env.EXPO_PUBLIC_OPENAI_MODEL || 'gpt-4o-mini';
 const ANTHROPIC_MODEL = process.env.EXPO_PUBLIC_ANTHROPIC_MODEL || 'claude-sonnet-5';
@@ -384,6 +386,7 @@ export interface AnalysisResult {
   unknownSymbols: { id: string; description: string; imageRegion?: { x: number; y: number; width: number; height: number } }[];
   summary: string;
   startPointAmbiguous?: boolean;
+  validationWarnings?: string[];
 }
 
 function parseJsonResult<T>(content: string, label: string): T {
@@ -409,6 +412,38 @@ function parseJsonResult<T>(content: string, label: string): T {
   }
 }
 
+// Tries a normal full parse first. If that fails outright (e.g. the
+// response was truncated mid-array), salvages whatever wires/components/
+// connections parsed cleanly before the cutoff instead of discarding the
+// entire response — a partial result the user can fill the gaps in beats
+// a hard failure that throws away real, usable data.
+function parseAnalysisWithSalvage(content: string, label: string): AnalysisResult {
+  try {
+    return parseJsonResult<AnalysisResult>(content, label);
+  } catch (e) {
+    const salvage = salvagePartialAnalysis(content);
+    if (salvage.wires.length === 0 && salvage.components.length === 0) {
+      throw e; // nothing recoverable
+    }
+    console.warn(`[OpenRouter] ${label} full parse failed — salvaged partial result`, {
+      wires: salvage.wires.length,
+      components: salvage.components.length,
+      connections: salvage.connections.length,
+    });
+    return {
+      wires: salvage.wires as AnalysisResult['wires'],
+      components: salvage.components as AnalysisResult['components'],
+      connections: salvage.connections as AnalysisResult['connections'],
+      unknownSymbols: salvage.unknownSymbols as AnalysisResult['unknownSymbols'],
+      summary: salvage.summary,
+      startPointAmbiguous: salvage.startPointAmbiguous,
+      validationWarnings: [
+        'This is a partial result — the AI response was cut off before finishing. Some wires, components, or connections may be missing. Add them manually if needed.',
+      ],
+    };
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Single-image schematic analysis
 // ---------------------------------------------------------------------------
@@ -420,13 +455,17 @@ export async function analyzeSchematic(base64Image: string): Promise<AnalysisRes
   const prompt = `${ANALYSIS_SYSTEM_PROMPT}\n\nAnalyze this electrical schematic and extract ALL wiring information as specified.`;
   const content = await callVisionWithFallback(imageUrl, prompt);
 
-  const parsed = parseJsonResult<AnalysisResult>(content, 'analyzeSchematic');
+  const parsed = parseAnalysisWithSalvage(content, 'analyzeSchematic');
   console.log('[OpenRouter] analyzeSchematic parsed', {
     wires: parsed.wires?.length,
     components: parsed.components?.length,
     connections: parsed.connections?.length,
     unknownSymbols: parsed.unknownSymbols?.length,
   });
+  parsed.validationWarnings = [...(parsed.validationWarnings ?? []), ...validateAnalysisConsistency(parsed)];
+  if (parsed.validationWarnings.length > 0) {
+    console.warn('[OpenRouter] analyzeSchematic validation warnings', parsed.validationWarnings);
+  }
   return parsed;
 }
 
@@ -442,12 +481,16 @@ export async function analyzeMultipleImages(base64Images: string[]): Promise<Ana
 
   const content = await callMultiVisionWithFallback(imageUrls, prompt, ANALYSIS_SYSTEM_PROMPT, 8192);
 
-  const parsed = parseJsonResult<AnalysisResult>(content, 'analyzeMultipleImages');
+  const parsed = parseAnalysisWithSalvage(content, 'analyzeMultipleImages');
   console.log('[OpenRouter] analyzeMultipleImages parsed', {
     pages: base64Images.length,
     wires: parsed.wires?.length,
     components: parsed.components?.length,
   });
+  parsed.validationWarnings = [...(parsed.validationWarnings ?? []), ...validateAnalysisConsistency(parsed)];
+  if (parsed.validationWarnings.length > 0) {
+    console.warn('[OpenRouter] analyzeMultipleImages validation warnings', parsed.validationWarnings);
+  }
   return parsed;
 }
 
@@ -481,13 +524,24 @@ Or, when stopping at an unresolved split:
   "pendingChoice": { "terminal": "TB1-1", "options": [{ "to": "CR1-A1", "wireLabel": "14", "description": "To Control Relay CR1 coil A1" }, { "to": "M1-T1", "wireLabel": "22", "description": "To Motor M1 terminal T1" }] }
 }`;
 
+function readingStepsPrompt(verbosity?: 'concise' | 'detailed'): string {
+  if (verbosity === 'detailed') {
+    return `${READING_STEPS_SYSTEM_PROMPT}\n\nThis crew is training — favor the "detail" field: explain unfamiliar terminology and the reasoning behind each connection, not just what it is.`;
+  }
+  if (verbosity === 'concise') {
+    return `${READING_STEPS_SYSTEM_PROMPT}\n\nThis crew is experienced — keep "detail" minimal or omit it for standard components; just give the path clearly and quickly.`;
+  }
+  return READING_STEPS_SYSTEM_PROMPT;
+}
+
 export async function generateReadingSteps(
   analysis: AnalysisResult,
   direction: 'forward' | 'backward',
   startPoint: string,
-  branchChoices?: Record<string, string>
+  branchChoices?: Record<string, string>,
+  verbosity?: 'concise' | 'detailed'
 ): Promise<ReadingStepsResult> {
-  console.log('[OpenRouter] generateReadingSteps called', { direction, startPoint, branchChoices });
+  console.log('[OpenRouter] generateReadingSteps called', { direction, startPoint, branchChoices, verbosity });
 
   const branchChoicesText =
     branchChoices && Object.keys(branchChoices).length > 0
@@ -500,7 +554,7 @@ Schematic analysis:
 ${JSON.stringify(analysis)}`;
 
   const content = await callTextWithFallback([
-    { role: 'system', content: READING_STEPS_SYSTEM_PROMPT },
+    { role: 'system', content: readingStepsPrompt(verbosity) },
     { role: 'user', content: userMessage },
   ], 4096);
 
@@ -523,9 +577,10 @@ export async function continueReadingSteps(
   direction: 'forward' | 'backward',
   priorSteps: ReadingStep[],
   resolvedTerminal: string,
-  resolvedTo: string
+  resolvedTo: string,
+  verbosity?: 'concise' | 'detailed'
 ): Promise<ReadingStepsResult> {
-  console.log('[OpenRouter] continueReadingSteps called', { resolvedTerminal, resolvedTo });
+  console.log('[OpenRouter] continueReadingSteps called', { resolvedTerminal, resolvedTo, verbosity });
 
   const userMessage = `You already generated these ${direction} reading steps:
 ${JSON.stringify(priorSteps)}
@@ -536,7 +591,7 @@ Schematic analysis:
 ${JSON.stringify(analysis)}`;
 
   const content = await callTextWithFallback([
-    { role: 'system', content: READING_STEPS_SYSTEM_PROMPT },
+    { role: 'system', content: readingStepsPrompt(verbosity) },
     { role: 'user', content: userMessage },
   ], 4096);
 
@@ -609,4 +664,141 @@ export async function answerSchematicQuestion(
   ], 1800);
 
   return content.trim();
+}
+
+// ---------------------------------------------------------------------------
+// Voice correction — "wire 22, not 14" style spoken fixes
+// ---------------------------------------------------------------------------
+
+export interface VoiceCorrectionResult {
+  understood: boolean;
+  field: string;
+  newValue: string;
+}
+
+const VOICE_CORRECTION_SYSTEM_PROMPT = `You are helping an electrician correct a mistake the AI made while reading a wire schematic. You'll be given the current field values for one item (a wire, component, or connection) and a spoken correction. Figure out which single field is being corrected and what its new value should be.
+
+Only choose a field name from the list of valid fields given. If the correction clearly describes deleting or doesn't map to any real field, set "understood" to false.
+
+Return ONLY a valid JSON object — no markdown:
+{ "understood": true, "field": "label", "newValue": "22" }`;
+
+/**
+ * Parses a spoken correction against one item's current fields. Text-only
+ * (no image), so this goes through callTextWithFallback and does not count
+ * against the free-scan limit — corrections stay free even on the built-in
+ * key.
+ */
+export async function parseVoiceCorrection(
+  kind: 'wire' | 'component' | 'connection',
+  currentFields: Record<string, string>,
+  transcript: string
+): Promise<VoiceCorrectionResult> {
+  console.log('[OpenRouter] parseVoiceCorrection called', { kind, transcript });
+
+  const userMessage = `Item type: ${kind}
+Current fields: ${JSON.stringify(currentFields)}
+Valid field names: ${Object.keys(currentFields).join(', ')}
+Spoken correction: "${transcript}"
+
+Which field is being corrected, and what should its new value be?`;
+
+  const content = await callTextWithFallback(
+    [
+      { role: 'system', content: VOICE_CORRECTION_SYSTEM_PROMPT },
+      { role: 'user', content: userMessage },
+    ],
+    300
+  );
+
+  const result = parseJsonResult<VoiceCorrectionResult>(content, 'parseVoiceCorrection');
+  if (!Object.keys(currentFields).includes(result.field)) {
+    return { understood: false, field: '', newValue: '' };
+  }
+  return result;
+}
+
+// ---------------------------------------------------------------------------
+// Teaching profiles — "New profile: Apprentices, go slower and explain
+// terminology" spoken setup
+// ---------------------------------------------------------------------------
+
+export interface ParsedTeachingProfile {
+  name: string;
+  speed: 'slow' | 'normal' | 'fast';
+  verbosity: 'concise' | 'detailed';
+}
+
+const TEACHING_PROFILE_SYSTEM_PROMPT = `You are helping a supervisor set up a named reading profile for their crew, spoken aloud in one sentence. Extract:
+- name: a short label for the group (e.g. "Apprentices", "Journeymen", "Night Crew")
+- speed: "slow", "normal", or "fast" — infer from words like "slower"/"faster"/"take your time"/"quick", default "normal" if unclear
+- verbosity: "detailed" (explain terminology, more context — good for trainees) or "concise" (just the path, minimal extra talk — good for experienced crews), default "concise" if unclear
+
+Return ONLY a valid JSON object — no markdown:
+{ "name": "Apprentices", "speed": "slow", "verbosity": "detailed" }`;
+
+export async function parseTeachingProfile(transcript: string): Promise<ParsedTeachingProfile> {
+  console.log('[OpenRouter] parseTeachingProfile called', { transcript });
+
+  const content = await callTextWithFallback(
+    [
+      { role: 'system', content: TEACHING_PROFILE_SYSTEM_PROMPT },
+      { role: 'user', content: transcript },
+    ],
+    200
+  );
+
+  const result = parseJsonResult<Partial<ParsedTeachingProfile>>(content, 'parseTeachingProfile');
+  return {
+    name: typeof result.name === 'string' && result.name.trim() ? result.name.trim() : 'New Profile',
+    speed: result.speed === 'slow' || result.speed === 'fast' ? result.speed : 'normal',
+    verbosity: result.verbosity === 'detailed' ? 'detailed' : 'concise',
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Quiz mode — grading a trainee's spoken answer against a standard's
+// verified ground truth
+// ---------------------------------------------------------------------------
+
+export interface QuizGradeResult {
+  correct: boolean;
+  feedback: string;
+}
+
+const QUIZ_GRADE_SYSTEM_PROMPT = `You are grading a trainee electrician's spoken answer to a quiz question about a wire schematic. You'll be given the question, the verified correct answer, and what the trainee said. Electricians often phrase things loosely (e.g. saying "the motor" instead of "M1", or "terminal three" instead of "T3") — count it correct if it clearly refers to the same point/component/wire as the correct answer, even if worded differently. Be strict about wrong answers.
+
+Return ONLY a valid JSON object — no markdown:
+{ "correct": true, "feedback": "Correct — that's the same as M1." }`;
+
+/**
+ * Grades a spoken quiz answer. Text-only (no image), so this goes through
+ * callTextWithFallback and does not count against the free-scan limit.
+ */
+export async function parseQuizAnswer(
+  question: string,
+  correctAnswer: string,
+  transcript: string
+): Promise<QuizGradeResult> {
+  console.log('[OpenRouter] parseQuizAnswer called', { question, correctAnswer, transcript });
+
+  const userMessage = `Question: "${question}"
+Correct answer: "${correctAnswer}"
+Trainee said: "${transcript}"
+
+Is the trainee's answer correct?`;
+
+  const content = await callTextWithFallback(
+    [
+      { role: 'system', content: QUIZ_GRADE_SYSTEM_PROMPT },
+      { role: 'user', content: userMessage },
+    ],
+    200
+  );
+
+  const result = parseJsonResult<Partial<QuizGradeResult>>(content, 'parseQuizAnswer');
+  return {
+    correct: result.correct === true,
+    feedback: typeof result.feedback === 'string' && result.feedback.trim() ? result.feedback.trim() : '',
+  };
 }

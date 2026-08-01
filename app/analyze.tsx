@@ -15,6 +15,9 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { router, useFocusEffect, useLocalSearchParams } from 'expo-router';
 import * as FileSystem from 'expo-file-system/legacy';
+import { ExpoSpeechRecognitionModule, useSpeechRecognitionEvent } from 'expo-speech-recognition';
+import { speakText } from '@/utils/tts';
+import PulsingLogo from '@/components/PulsingLogo';
 import {
   AlertTriangle,
   ArrowLeft,
@@ -25,6 +28,8 @@ import {
   GitBranch,
   Highlighter,
   MessageSquare,
+  Mic,
+  StickyNote,
   Pencil,
   Play,
   RefreshCw,
@@ -36,7 +41,7 @@ import {
 } from 'lucide-react-native';
 import { WT } from '@/constants/wiretrace';
 import { AppLanguage, isSpanish, loadAppLanguage } from '@/utils/app-language';
-import { analyzeSchematic, analyzeMultipleImages, AnalysisResult, generateReadingSteps } from '@/utils/openrouter';
+import { analyzeSchematic, analyzeMultipleImages, AnalysisResult, generateReadingSteps, parseVoiceCorrection } from '@/utils/openrouter';
 import {
   generateSchematicName,
   getSchematic,
@@ -47,8 +52,13 @@ import {
   Connection,
   UnknownSymbol,
 } from '@/utils/schematic-storage';
-import { findJunctions, JunctionChoice } from '@/utils/schematic-graph';
+import { findJunctions, JunctionChoice, matchJunctionAnswer } from '@/utils/schematic-graph';
+import { getActiveProfile } from '@/utils/teaching-profiles';
 import { DEFAULT_UI_PREFERENCES, loadUIPreferences } from '@/utils/ui-preferences';
+
+function targetMatches(target: { kind: string; id?: string } | null, kind: string, id: string): boolean {
+  return !!target && target.kind === kind && target.id === id;
+}
 
 function resolveImageSource(source: string | number | ImageSourcePropType | undefined): ImageSourcePropType {
   if (!source) return { uri: '' };
@@ -58,12 +68,16 @@ function resolveImageSource(source: string | number | ImageSourcePropType | unde
 
 function AnimatedPressable({
   onPress,
+  onLongPress,
+  onPressOut: onPressOutProp,
   style,
   children,
   scaleValue = 0.97,
   disabled,
 }: {
   onPress?: () => void;
+  onLongPress?: () => void;
+  onPressOut?: () => void;
   style?: object | object[];
   children: React.ReactNode;
   scaleValue?: number;
@@ -76,7 +90,18 @@ function AnimatedPressable({
     Animated.spring(scale, { toValue: 1, useNativeDriver: true, speed: 50, bounciness: 4 }).start();
   return (
     <Animated.View style={[{ transform: [{ scale }] }, disabled && { opacity: 0.5 }]}>
-      <Pressable onPressIn={animIn} onPressOut={animOut} onPress={onPress} disabled={disabled} style={style}>
+      <Pressable
+        onPressIn={animIn}
+        onPressOut={() => {
+          animOut();
+          onPressOutProp?.();
+        }}
+        onPress={onPress}
+        onLongPress={onLongPress}
+        delayLongPress={450}
+        disabled={disabled}
+        style={style}
+      >
         {children}
       </Pressable>
     </Animated.View>
@@ -195,6 +220,26 @@ export default function AnalyzeScreen() {
   const [language, setLanguage] = useState<AppLanguage>('english');
   const es = isSpanish(language);
 
+  // Voice correction — long-press-and-hold a row, speak the fix, release to submit
+  const [correctionListening, setCorrectionListening] = useState(false);
+  const [correctionBusy, setCorrectionBusy] = useState(false);
+  const [correctionStatus, setCorrectionStatus] = useState<string | null>(null);
+  const correctionTargetRef = useRef<EditTarget | null>(null);
+  const correctionActiveRef = useRef(false);
+  const correctionTranscriptRef = useRef('');
+
+  // Voice notes — separate mic button, hold to record, read aloud in the Reader
+  const [noteListening, setNoteListening] = useState(false);
+  const [noteStatus, setNoteStatus] = useState<string | null>(null);
+  const noteTargetRef = useRef<EditTarget | null>(null);
+  const noteActiveRef = useRef(false);
+  const noteTranscriptRef = useRef('');
+
+  // Suggest saving as a verified "standard" once the user has actually fixed something
+  const [correctionsMade, setCorrectionsMade] = useState(0);
+  const [standardPromptDismissed, setStandardPromptDismissed] = useState(false);
+  const [savingStandard, setSavingStandard] = useState(false);
+
   const pulseAnim = useRef(new Animated.Value(0.6)).current;
 
   useEffect(() => {
@@ -259,6 +304,7 @@ export default function AnalyzeScreen() {
         connections: (result.connections ?? []).map((c) => ({ ...c } as Connection)),
         unknownSymbols: (result.unknownSymbols ?? []).map((u) => ({ ...u } as UnknownSymbol)),
         readingSteps: [],
+        validationWarnings: result.validationWarnings,
       };
 
       await saveSchematic(newSchematic);
@@ -302,6 +348,7 @@ export default function AnalyzeScreen() {
         connections: (result.connections ?? []).map((c) => ({ ...c } as Connection)),
         unknownSymbols: (result.unknownSymbols ?? []).map((u) => ({ ...u } as UnknownSymbol)),
         readingSteps: [],
+        validationWarnings: result.validationWarnings,
       };
 
       await saveSchematic(newSchematic);
@@ -366,6 +413,7 @@ export default function AnalyzeScreen() {
     setGeneratingSteps(true);
     console.log('[Analyze] Generating reading steps via OpenRouter');
     try {
+      const activeProfile = await getActiveProfile();
       const { steps, pendingChoice } = await generateReadingSteps(
         {
           wires: schematic.wires,
@@ -376,7 +424,8 @@ export default function AnalyzeScreen() {
         },
         direction,
         startLabel,
-        branchChoices
+        branchChoices,
+        activeProfile?.verbosity
       );
 
       const updated = { ...schematic, readingSteps: steps, pendingJunction: pendingChoice, branchChoices };
@@ -450,6 +499,274 @@ export default function AnalyzeScreen() {
     setEditValues({});
   };
 
+  function getCorrectionFieldValues(target: EditTarget): Record<string, string> | null {
+    if (!schematic) return null;
+    if (target.kind === 'wire') {
+      const wire = schematic.wires.find((w) => w.id === target.id);
+      if (!wire) return null;
+      return {
+        label: wire.label || '',
+        color: wire.color || '',
+        fromPoint: wire.fromPoint || '',
+        toPoint: wire.toPoint || '',
+        voltage: wire.voltage || '',
+      };
+    }
+    if (target.kind === 'component') {
+      const comp = schematic.components.find((c) => c.id === target.id);
+      if (!comp) return null;
+      return { label: comp.label || '', type: comp.type || '', description: comp.description || '' };
+    }
+    if (target.kind === 'connection') {
+      const conn = schematic.connections.find((c) => c.id === target.id);
+      if (!conn) return null;
+      return {
+        wireLabel: conn.wireLabel || '',
+        from: conn.from || '',
+        to: conn.to || '',
+        description: conn.description || '',
+      };
+    }
+    return null;
+  }
+
+  async function applyCorrectionField(target: EditTarget, field: string, newValue: string) {
+    if (!schematic) return;
+    let updated: SchematicAnalysis = schematic;
+
+    if (target.kind === 'wire') {
+      const wires = schematic.wires.map((w) => (w.id === target.id ? { ...w, [field]: newValue || undefined } : w));
+      updated = { ...schematic, wires, readingSteps: [] };
+    } else if (target.kind === 'component') {
+      const components = schematic.components.map((c) => (c.id === target.id ? { ...c, [field]: newValue } : c));
+      updated = { ...schematic, components, readingSteps: [] };
+    } else if (target.kind === 'connection') {
+      const connections = schematic.connections.map((c) => (c.id === target.id ? { ...c, [field]: newValue } : c));
+      updated = { ...schematic, connections, readingSteps: [] };
+    }
+
+    setSchematic(updated);
+    await saveSchematic(updated);
+  }
+
+  const startVoiceCorrection = async (target: EditTarget) => {
+    if (target.kind === 'summary' || correctionListening) return;
+    console.log('[Analyze] Starting voice correction', target);
+    try {
+      if (!ExpoSpeechRecognitionModule.isRecognitionAvailable()) {
+        setCorrectionStatus(es ? 'Reconocimiento de voz no disponible' : 'Voice recognition unavailable');
+        return;
+      }
+      const permission = await ExpoSpeechRecognitionModule.requestPermissionsAsync();
+      if (!permission.granted) {
+        setCorrectionStatus(es ? 'Se requiere permiso de micrófono' : 'Microphone permission required');
+        return;
+      }
+      correctionTargetRef.current = target;
+      correctionActiveRef.current = true;
+      correctionTranscriptRef.current = '';
+      setCorrectionStatus(es ? 'Escuchando la corrección...' : 'Listening for correction...');
+      setCorrectionListening(true);
+      ExpoSpeechRecognitionModule.start({
+        lang: es ? 'es-US' : 'en-US',
+        interimResults: true,
+        continuous: true,
+        maxAlternatives: 1,
+      });
+    } catch (e) {
+      console.error('[Analyze] Failed to start voice correction', e);
+      setCorrectionStatus(es ? 'No se pudo iniciar el micrófono' : 'Could not start microphone');
+    }
+  };
+
+  const stopVoiceCorrection = () => {
+    if (!correctionActiveRef.current) return;
+    correctionActiveRef.current = false;
+    setCorrectionListening(false);
+    try {
+      ExpoSpeechRecognitionModule.stop();
+    } catch (e) {
+      console.error('[Analyze] Failed to stop voice correction', e);
+    }
+  };
+
+  const processVoiceCorrectionResult = async () => {
+    const target = correctionTargetRef.current;
+    const transcript = correctionTranscriptRef.current.trim();
+    correctionTargetRef.current = null;
+
+    if (!target || !transcript) {
+      setCorrectionStatus(null);
+      return;
+    }
+
+    const currentFields = getCorrectionFieldValues(target);
+    if (!currentFields) {
+      setCorrectionStatus(null);
+      return;
+    }
+
+    setCorrectionBusy(true);
+    setCorrectionStatus(es ? 'Aplicando corrección...' : 'Applying correction...');
+    try {
+      const result = await parseVoiceCorrection(
+        target.kind as 'wire' | 'component' | 'connection',
+        currentFields,
+        transcript
+      );
+      if (!result.understood) {
+        const msg = es ? 'No se entendió la corrección — intenta de nuevo' : "Didn't catch that — try again";
+        setCorrectionStatus(msg);
+        speakText(es ? 'No entendí esa corrección.' : "I didn't catch that correction.");
+        return;
+      }
+      await applyCorrectionField(target, result.field, result.newValue);
+      setCorrectionsMade((n) => n + 1);
+      const confirmMsg = es
+        ? `Listo — ${result.field} cambiado a ${result.newValue}`
+        : `Got it — ${result.field} changed to ${result.newValue}`;
+      setCorrectionStatus(confirmMsg);
+      speakText(confirmMsg);
+      console.log('[Analyze] Voice correction applied', { target, field: result.field, newValue: result.newValue });
+    } catch (e) {
+      console.error('[Analyze] Voice correction failed', e);
+      setCorrectionStatus(e instanceof Error ? e.message : es ? 'La corrección falló' : 'Correction failed');
+    } finally {
+      setCorrectionBusy(false);
+      setTimeout(() => setCorrectionStatus(null), 3000);
+    }
+  };
+
+  const startNoteRecording = async (target: EditTarget) => {
+    if (target.kind !== 'wire' && target.kind !== 'component') return;
+    if (noteListening || correctionListening) return;
+    console.log('[Analyze] Starting note recording', target);
+    try {
+      if (!ExpoSpeechRecognitionModule.isRecognitionAvailable()) {
+        setNoteStatus(es ? 'Reconocimiento de voz no disponible' : 'Voice recognition unavailable');
+        return;
+      }
+      const permission = await ExpoSpeechRecognitionModule.requestPermissionsAsync();
+      if (!permission.granted) {
+        setNoteStatus(es ? 'Se requiere permiso de micrófono' : 'Microphone permission required');
+        return;
+      }
+      noteTargetRef.current = target;
+      noteActiveRef.current = true;
+      noteTranscriptRef.current = '';
+      setNoteStatus(es ? 'Grabando nota...' : 'Recording note...');
+      setNoteListening(true);
+      ExpoSpeechRecognitionModule.start({
+        lang: es ? 'es-US' : 'en-US',
+        interimResults: true,
+        continuous: true,
+        maxAlternatives: 1,
+      });
+    } catch (e) {
+      console.error('[Analyze] Failed to start note recording', e);
+      setNoteStatus(es ? 'No se pudo iniciar el micrófono' : 'Could not start microphone');
+    }
+  };
+
+  const stopNoteRecording = () => {
+    if (!noteActiveRef.current) return;
+    noteActiveRef.current = false;
+    setNoteListening(false);
+    try {
+      ExpoSpeechRecognitionModule.stop();
+    } catch (e) {
+      console.error('[Analyze] Failed to stop note recording', e);
+    }
+  };
+
+  const processNoteResult = async () => {
+    const target = noteTargetRef.current;
+    const transcript = noteTranscriptRef.current.trim();
+    noteTargetRef.current = null;
+
+    if (!target || !transcript || !schematic) {
+      setNoteStatus(null);
+      return;
+    }
+
+    let updated: SchematicAnalysis = schematic;
+    let candidatePoints: string[] = [];
+    if (target.kind === 'wire') {
+      const wire = schematic.wires.find((w) => w.id === target.id);
+      const wires = schematic.wires.map((w) => (w.id === target.id ? { ...w, userNote: transcript } : w));
+      updated = { ...schematic, wires };
+      if (wire) candidatePoints = [wire.fromPoint, wire.toPoint];
+    } else if (target.kind === 'component') {
+      const comp = schematic.components.find((c) => c.id === target.id);
+      const components = schematic.components.map((c) => (c.id === target.id ? { ...c, userNote: transcript } : c));
+      updated = { ...schematic, components };
+      if (comp) candidatePoints = [comp.label];
+    }
+
+    // If this note was recorded at a junction (a terminal where the path
+    // splits), and it clearly names one of the branch options, resolve the
+    // ambiguity outright instead of just leaving it as narration.
+    const junctions = findJunctions(schematic.connections);
+    let resolvedTerminal: string | null = null;
+    let resolvedTo: string | null = null;
+    for (const point of candidatePoints) {
+      const junction = junctions.find(
+        (j) => j.terminal === point || j.terminal.toUpperCase().startsWith(point.toUpperCase())
+      );
+      if (!junction) continue;
+      const match = matchJunctionAnswer(transcript, junction);
+      if (match) {
+        resolvedTerminal = junction.terminal;
+        resolvedTo = match.to;
+        break;
+      }
+    }
+
+    if (resolvedTerminal && resolvedTo) {
+      updated = {
+        ...updated,
+        branchChoices: { ...(updated.branchChoices ?? {}), [resolvedTerminal]: resolvedTo },
+        readingSteps: [],
+      };
+    }
+
+    setSchematic(updated);
+    await saveSchematic(updated);
+    const confirmMsg = resolvedTerminal
+      ? es
+        ? `Nota guardada — bifurcación resuelta hacia ${resolvedTo}`
+        : `Note saved — branch resolved toward ${resolvedTo}`
+      : es
+      ? 'Nota guardada'
+      : 'Note saved';
+    setNoteStatus(confirmMsg);
+    speakText(confirmMsg);
+    console.log('[Analyze] Note saved', { target, transcript, resolvedTerminal, resolvedTo });
+    setTimeout(() => setNoteStatus(null), 2500);
+  };
+
+  const saveAsStandard = async () => {
+    if (!schematic) return;
+    setSavingStandard(true);
+    try {
+      const updated: SchematicAnalysis = { ...schematic, isStandard: true, standardName: schematic.name };
+      setSchematic(updated);
+      await saveSchematic(updated);
+      console.log('[Analyze] Saved as standard', { id: schematic.id, name: schematic.name });
+      Alert.alert(
+        es ? 'Guardado como Estándar' : 'Saved as Standard',
+        es
+          ? 'Este esquema verificado ahora está disponible como referencia confiable para tu equipo.'
+          : 'This verified schematic is now available as a trusted reference for your team.'
+      );
+    } catch (e) {
+      console.error('[Analyze] Failed to save as standard', e);
+      Alert.alert(es ? 'Error' : 'Error', e instanceof Error ? e.message : String(e));
+    } finally {
+      setSavingStandard(false);
+    }
+  };
+
   const handleSaveEdit = async () => {
     if (!schematic || !editTarget) return;
     setSavingEdit(true);
@@ -496,6 +813,7 @@ export default function AnalyzeScreen() {
 
       setSchematic(updated);
       await saveSchematic(updated);
+      setCorrectionsMade((n) => n + 1);
       console.log('[Analyze] Edit saved', { kind: editTarget.kind });
       closeEdit();
     } catch (e) {
@@ -525,6 +843,7 @@ export default function AnalyzeScreen() {
 
       setSchematic(updated);
       await saveSchematic(updated);
+      setCorrectionsMade((n) => n + 1);
       console.log('[Analyze] Item deleted', { kind: editTarget.kind });
       closeEdit();
     } catch (e) {
@@ -656,6 +975,34 @@ export default function AnalyzeScreen() {
     );
   };
 
+  useSpeechRecognitionEvent('result', (event: any) => {
+    if (!correctionActiveRef.current && !noteActiveRef.current) return;
+    const rawResults = Array.isArray(event?.results) ? event.results : [];
+    for (let i = rawResults.length - 1; i >= 0; i -= 1) {
+      const text = rawResults[i]?.transcript;
+      if (typeof text === 'string' && text.trim()) {
+        if (correctionActiveRef.current) correctionTranscriptRef.current = text.trim();
+        if (noteActiveRef.current) noteTranscriptRef.current = text.trim();
+        break;
+      }
+    }
+  });
+
+  useSpeechRecognitionEvent('end', () => {
+    if (correctionListening) {
+      setCorrectionListening(false);
+    }
+    if (noteListening) {
+      setNoteListening(false);
+    }
+    if (correctionTargetRef.current) {
+      processVoiceCorrectionResult();
+    }
+    if (noteTargetRef.current) {
+      processNoteResult();
+    }
+  });
+
   return (
     <View style={[styles.root, isLightMode && styles.rootLight, isDark && styles.rootDark, { paddingTop: insets.top }]}>
       {/* Header */}
@@ -666,7 +1013,10 @@ export default function AnalyzeScreen() {
         }} style={styles.backBtn} scaleValue={0.9}>
           <ArrowLeft size={22} color={WT.blue} />
         </AnimatedPressable>
-        <Text style={[styles.headerTitle, isLightMode && styles.headerTitleLight, isDark && styles.headerTitleDark]}>{es ? 'Analizar Esquema' : 'Analyze Schematic'}</Text>
+        <View style={styles.headerCenter}>
+          <PulsingLogo size={18} />
+          <Text style={[styles.headerTitle, isLightMode && styles.headerTitleLight, isDark && styles.headerTitleDark]}>{es ? 'Analizar Esquema' : 'Analyze Schematic'}</Text>
+        </View>
         <View style={{ width: 44 }} />
       </View>
 
@@ -776,6 +1126,58 @@ export default function AnalyzeScreen() {
               </View>
             ) : null}
 
+            <AnimatedPressable
+              onPress={() => {
+                console.log('[Analyze] View diagram pressed');
+                router.push({ pathname: '/schematic-view', params: { schematicId: schematic.id } });
+              }}
+              style={styles.diagramBtn}
+              scaleValue={0.97}
+            >
+              <GitBranch size={18} color={WT.blue} />
+              <View style={{ flex: 1 }}>
+                <Text style={styles.diagramBtnText}>{es ? 'Ver Diagrama Limpio' : 'View Clean Diagram'}</Text>
+                <Text style={styles.diagramBtnSub}>
+                  {es ? 'Cables y componentes sin la foto original' : 'Wires and components without the original photo'}
+                </Text>
+              </View>
+            </AnimatedPressable>
+
+            {schematic.isStandard ? (
+              <View style={styles.standardBadgeBanner}>
+                <CheckCircle size={16} color={WT.green} />
+                <Text style={styles.standardBadgeText}>
+                  {es ? 'Guardado como estándar verificado' : 'Saved as a verified standard'}
+                </Text>
+              </View>
+            ) : (
+              correctionsMade > 0 &&
+              !standardPromptDismissed && (
+                <View style={styles.standardPromptBanner}>
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.standardPromptTitle}>
+                      {es ? '¿Guardar como Estándar?' : 'Save as a Standard?'}
+                    </Text>
+                    <Text style={styles.standardPromptText}>
+                      {es
+                        ? 'Ya corregiste este esquema — guárdalo como referencia confiable para entrenar a tu equipo.'
+                        : "You've corrected this schematic — save it as a trusted reference to train your team."}
+                    </Text>
+                  </View>
+                  <View style={{ gap: 6 }}>
+                    <AnimatedPressable onPress={saveAsStandard} style={styles.standardSaveBtn} disabled={savingStandard} scaleValue={0.95}>
+                      <Text style={styles.standardSaveBtnText}>
+                        {savingStandard ? (es ? 'Guardando...' : 'Saving...') : es ? 'Guardar' : 'Save'}
+                      </Text>
+                    </AnimatedPressable>
+                    <AnimatedPressable onPress={() => setStandardPromptDismissed(true)} style={styles.standardDismissBtn} scaleValue={0.95}>
+                      <Text style={styles.standardDismissBtnText}>{es ? 'Ahora no' : 'Not now'}</Text>
+                    </AnimatedPressable>
+                  </View>
+                </View>
+              )
+            )}
+
             <View style={[styles.card, isHighContrast && styles.highContrastCard]}>
               <View style={styles.cardHeader}>
                 <MessageSquare size={16} color={WT.blue} />
@@ -846,7 +1248,13 @@ export default function AnalyzeScreen() {
                   <AnimatedPressable
                     key={wire.id}
                     onPress={() => toggleHighlight(`wire:${wire.id}`)}
-                    style={[styles.wireRow, highlightKey === `wire:${wire.id}` && styles.highlightedRow]}
+                    onLongPress={() => startVoiceCorrection({ kind: 'wire', id: wire.id })}
+                    onPressOut={stopVoiceCorrection}
+                    style={[
+                      styles.wireRow,
+                      highlightKey === `wire:${wire.id}` && styles.highlightedRow,
+                      correctionListening && targetMatches(correctionTargetRef.current, 'wire', wire.id) && styles.correctionActiveRow,
+                    ]}
                     scaleValue={0.99}
                   >
                     <View style={[styles.wireColorDot, { backgroundColor: wireColor(wire.color) }]} />
@@ -870,6 +1278,32 @@ export default function AnalyzeScreen() {
                       </View>
                     ) : null}
                     <ConfBadge confidence={wire.confidence} />
+                    {wire.userNote ? (
+                      <AnimatedPressable
+                        onPress={() => {
+                          if (uiPrefs.notesVisible) {
+                            Alert.alert(es ? 'Nota de Voz' : 'Voice Note', wire.userNote);
+                          } else {
+                            speakText(wire.userNote!);
+                          }
+                        }}
+                        style={styles.noteBadgeBtn}
+                        scaleValue={0.9}
+                      >
+                        <StickyNote size={13} color={WT.yellow} />
+                      </AnimatedPressable>
+                    ) : null}
+                    <AnimatedPressable
+                      onLongPress={() => startNoteRecording({ kind: 'wire', id: wire.id })}
+                      onPressOut={stopNoteRecording}
+                      style={[
+                        styles.editIconBtn,
+                        noteListening && targetMatches(noteTargetRef.current, 'wire', wire.id) && styles.correctionActiveRow,
+                      ]}
+                      scaleValue={0.9}
+                    >
+                      <Mic size={13} color={noteListening && targetMatches(noteTargetRef.current, 'wire', wire.id) ? WT.green : WT.textSecondary} />
+                    </AnimatedPressable>
                     <AnimatedPressable onPress={() => openEditWire(wire)} style={styles.editIconBtn} scaleValue={0.9}>
                       <Pencil size={14} color={WT.textSecondary} />
                     </AnimatedPressable>
@@ -901,7 +1335,13 @@ export default function AnalyzeScreen() {
                   <AnimatedPressable
                     key={comp.id}
                     onPress={() => toggleHighlight(`component:${comp.id}`)}
-                    style={[styles.componentRow, highlightKey === `component:${comp.id}` && styles.highlightedRow]}
+                    onLongPress={() => startVoiceCorrection({ kind: 'component', id: comp.id })}
+                    onPressOut={stopVoiceCorrection}
+                    style={[
+                      styles.componentRow,
+                      highlightKey === `component:${comp.id}` && styles.highlightedRow,
+                      correctionListening && targetMatches(correctionTargetRef.current, 'component', comp.id) && styles.correctionActiveRow,
+                    ]}
                     scaleValue={0.99}
                   >
                     <View style={styles.componentLeft}>
@@ -913,6 +1353,32 @@ export default function AnalyzeScreen() {
                       </View>
                       <ConfBadge confidence={comp.confidence} />
                       <View style={{ flex: 1 }} />
+                      {comp.userNote ? (
+                        <AnimatedPressable
+                          onPress={() => {
+                            if (uiPrefs.notesVisible) {
+                              Alert.alert(es ? 'Nota de Voz' : 'Voice Note', comp.userNote);
+                            } else {
+                              speakText(comp.userNote!);
+                            }
+                          }}
+                          style={styles.noteBadgeBtn}
+                          scaleValue={0.9}
+                        >
+                          <StickyNote size={13} color={WT.yellow} />
+                        </AnimatedPressable>
+                      ) : null}
+                      <AnimatedPressable
+                        onLongPress={() => startNoteRecording({ kind: 'component', id: comp.id })}
+                        onPressOut={stopNoteRecording}
+                        style={[
+                          styles.editIconBtn,
+                          noteListening && targetMatches(noteTargetRef.current, 'component', comp.id) && styles.correctionActiveRow,
+                        ]}
+                        scaleValue={0.9}
+                      >
+                        <Mic size={13} color={noteListening && targetMatches(noteTargetRef.current, 'component', comp.id) ? WT.green : WT.textSecondary} />
+                      </AnimatedPressable>
                       <AnimatedPressable onPress={() => openEditComponent(comp)} style={styles.editIconBtn} scaleValue={0.9}>
                         <Pencil size={14} color={WT.textSecondary} />
                       </AnimatedPressable>
@@ -984,7 +1450,13 @@ export default function AnalyzeScreen() {
                   <AnimatedPressable
                     key={conn.id}
                     onPress={() => toggleHighlight(`connection:${conn.id}`)}
-                    style={[styles.connectionRow, highlightKey === `connection:${conn.id}` && styles.highlightedRow]}
+                    onLongPress={() => startVoiceCorrection({ kind: 'connection', id: conn.id })}
+                    onPressOut={stopVoiceCorrection}
+                    style={[
+                      styles.connectionRow,
+                      highlightKey === `connection:${conn.id}` && styles.highlightedRow,
+                      correctionListening && targetMatches(correctionTargetRef.current, 'connection', conn.id) && styles.correctionActiveRow,
+                    ]}
                     scaleValue={0.99}
                   >
                     <View style={styles.connectionRowTop}>
@@ -1018,6 +1490,25 @@ export default function AnalyzeScreen() {
                     ? 'Este esquema no tiene un punto de inicio obvio (sin "Línea 1" clara). Elige "Cable/Componente Específico" abajo, o te preguntaremos por voz al comenzar la lectura.'
                     : 'This schematic doesn\'t have an obvious starting point (no clear "Line 1"). Choose "Specific Wire/Component" below, or we\'ll ask you by voice when reading starts.'}
                 </Text>
+              </View>
+            )}
+
+            {/* Structural consistency warnings — caught deterministically, not by the AI itself */}
+            {schematic.validationWarnings && schematic.validationWarnings.length > 0 && (
+              <View style={styles.warningBanner}>
+                <AlertTriangle size={18} color={WT.yellow} />
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.warningText}>
+                    {es
+                      ? `Se detectaron ${schematic.validationWarnings.length} posibles inconsistencias — revisa antes de confiar en la lectura:`
+                      : `${schematic.validationWarnings.length} possible inconsistenc${schematic.validationWarnings.length === 1 ? 'y' : 'ies'} detected — review before relying on the reading:`}
+                  </Text>
+                  {schematic.validationWarnings.map((w, i) => (
+                    <Text key={i} style={styles.warningText}>
+                      {'• '}{w}
+                    </Text>
+                  ))}
+                </View>
               </View>
             )}
 
@@ -1206,6 +1697,25 @@ export default function AnalyzeScreen() {
         </View>
       )}
 
+      {/* Voice correction / note status */}
+      {(correctionListening || correctionBusy || correctionStatus) && (
+        <View style={styles.correctionBanner}>
+          <Mic size={18} color={correctionListening ? WT.green : WT.textSecondary} />
+          <Text style={styles.correctionBannerText}>
+            {correctionStatus ||
+              (correctionListening ? (es ? 'Escuchando...' : 'Listening...') : es ? 'Procesando...' : 'Processing...')}
+          </Text>
+        </View>
+      )}
+      {(noteListening || noteStatus) && !correctionListening && !correctionStatus && (
+        <View style={styles.correctionBanner}>
+          <StickyNote size={18} color={noteListening ? WT.yellow : WT.textSecondary} />
+          <Text style={styles.correctionBannerText}>
+            {noteStatus || (es ? 'Grabando nota...' : 'Recording note...')}
+          </Text>
+        </View>
+      )}
+
       {/* Edit / correction modal */}
       <Modal visible={editTarget !== null} transparent animationType="fade" onRequestClose={closeEdit}>
         <View style={styles.modalOverlay}>
@@ -1284,6 +1794,11 @@ const styles = StyleSheet.create({
     height: 44,
     alignItems: 'center',
     justifyContent: 'center',
+  },
+  headerCenter: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
   },
   headerTitle: {
     fontSize: 17,
@@ -1534,6 +2049,46 @@ const styles = StyleSheet.create({
     borderRadius: 10,
     borderWidth: 1,
     borderColor: WT.blue,
+  },
+  correctionActiveRow: {
+    backgroundColor: WT.greenMuted,
+    borderRadius: 10,
+    borderWidth: 1.5,
+    borderColor: WT.green,
+  },
+  noteBadgeBtn: {
+    width: 26,
+    height: 26,
+    borderRadius: 13,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: WT.yellowMuted,
+  },
+  correctionBanner: {
+    position: 'absolute',
+    left: 16,
+    right: 16,
+    bottom: 20,
+    backgroundColor: WT.bgCard,
+    borderWidth: 1,
+    borderColor: WT.green,
+    borderRadius: 14,
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    shadowColor: '#000',
+    shadowOpacity: 0.3,
+    shadowRadius: 12,
+    shadowOffset: { width: 0, height: 4 },
+    elevation: 6,
+  },
+  correctionBannerText: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: WT.textPrimary,
+    flex: 1,
   },
   cardHeader: {
     flexDirection: 'row',
@@ -1917,6 +2472,84 @@ const styles = StyleSheet.create({
     fontSize: 13,
     color: WT.textSecondary,
     lineHeight: 19,
+  },
+  diagramBtn: {
+    backgroundColor: WT.bgCard,
+    borderRadius: 12,
+    paddingVertical: 12,
+    paddingHorizontal: 14,
+    borderWidth: 1,
+    borderColor: WT.border,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  diagramBtnText: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: WT.textPrimary,
+  },
+  diagramBtnSub: {
+    fontSize: 11.5,
+    color: WT.textSecondary,
+  },
+  standardBadgeBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    backgroundColor: WT.greenMuted,
+    borderWidth: 1,
+    borderColor: WT.green,
+    borderRadius: 12,
+    paddingVertical: 10,
+    paddingHorizontal: 14,
+  },
+  standardBadgeText: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: WT.green,
+  },
+  standardPromptBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    backgroundColor: WT.bgCard,
+    borderWidth: 1,
+    borderColor: WT.blue,
+    borderRadius: 14,
+    padding: 14,
+  },
+  standardPromptTitle: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: WT.textPrimary,
+    marginBottom: 3,
+  },
+  standardPromptText: {
+    fontSize: 12,
+    color: WT.textSecondary,
+    lineHeight: 17,
+  },
+  standardSaveBtn: {
+    backgroundColor: WT.blue,
+    borderRadius: 10,
+    paddingVertical: 8,
+    paddingHorizontal: 14,
+    alignItems: 'center',
+  },
+  standardSaveBtnText: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#FFFFFF',
+  },
+  standardDismissBtn: {
+    paddingVertical: 6,
+    paddingHorizontal: 14,
+    alignItems: 'center',
+  },
+  standardDismissBtnText: {
+    fontSize: 12,
+    color: WT.textSecondary,
   },
   voltageBadge: {
     backgroundColor: WT.bgCardAlt,

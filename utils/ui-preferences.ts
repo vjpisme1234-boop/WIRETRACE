@@ -9,6 +9,8 @@ export interface UIPreferences {
   visualMode: VisualMode;
   layoutPreset: LayoutPreset;
   visionProvider: VisionProviderPreference;
+  /** Whether voice-note text is shown as a badge/popup, or stays audio-only (spoken back via TTS). */
+  notesVisible: boolean;
 }
 
 export const DEFAULT_UI_PREFERENCES: UIPreferences = {
@@ -19,6 +21,7 @@ export const DEFAULT_UI_PREFERENCES: UIPreferences = {
   // "Auto" state that can read as "nothing is configured." Settings bumps
   // this to 'all' automatically the first time a user adds a paid key.
   visionProvider: 'gemini',
+  notesVisible: true,
 };
 
 const LEGACY_VISUAL_MODE_MAP: Record<string, VisualMode> = {
@@ -63,6 +66,7 @@ export async function loadUIPreferences(): Promise<UIPreferences> {
       visualMode: normalizeVisualMode(parsed.visualMode),
       layoutPreset: normalizeLayoutPreset(parsed.layoutPreset),
       visionProvider: normalizeVisionProvider(parsed.visionProvider),
+      notesVisible: typeof parsed.notesVisible === 'boolean' ? parsed.notesVisible : DEFAULT_UI_PREFERENCES.notesVisible,
     };
   } catch (error) {
     console.error('[UI Preferences] Failed to load preferences', error);

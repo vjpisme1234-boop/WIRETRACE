@@ -15,7 +15,7 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { router, useFocusEffect } from 'expo-router';
-import { BookOpen, Camera, CircuitBoard, Clock, Info, Settings, Upload, X } from 'lucide-react-native';
+import { BookMarked, BookOpen, Camera, CircuitBoard, Clock, GraduationCap, Info, Settings, Upload, X } from 'lucide-react-native';
 import { WT } from '@/constants/wiretrace';
 import { loadSchematics, SchematicAnalysis } from '@/utils/schematic-storage';
 import { AppLanguage, isSpanish, loadAppLanguage } from '@/utils/app-language';
@@ -298,9 +298,37 @@ export default function HomeScreen() {
 
                   {/* Symbol Dictionary quick-access */}
                   <AnimatedPressable onPress={handleDictionary} style={styles.dictBtn} scaleValue={0.97}>
-                    <BookOpen size={16} color={WT.blue} />
+                    <BookOpen size={15} color={WT.blue} />
                     <Text style={styles.dictBtnText}>{es ? 'Diccionario de Símbolos' : 'Symbol Dictionary'}</Text>
                     <Text style={styles.dictBtnSub}>{es ? 'Guía de referencia para símbolos estándar' : 'Reference guide for all standard symbols'}</Text>
+                  </AnimatedPressable>
+
+                  {/* Standards Library quick-access */}
+                  <AnimatedPressable
+                    onPress={() => {
+                      console.log('[Home] Tapped Standards Library');
+                      router.push('/standards');
+                    }}
+                    style={styles.dictBtn}
+                    scaleValue={0.97}
+                  >
+                    <BookMarked size={15} color={WT.blue} />
+                    <Text style={styles.dictBtnText}>{es ? 'Biblioteca de Estándares' : 'Standards Library'}</Text>
+                    <Text style={styles.dictBtnSub}>{es ? 'Esquemas verificados para tu equipo' : 'Verified schematics for your team'}</Text>
+                  </AnimatedPressable>
+
+                  {/* Quiz Mode quick-access */}
+                  <AnimatedPressable
+                    onPress={() => {
+                      console.log('[Home] Tapped Quiz Mode');
+                      router.push('/quiz');
+                    }}
+                    style={styles.dictBtn}
+                    scaleValue={0.97}
+                  >
+                    <GraduationCap size={15} color={WT.blue} />
+                    <Text style={styles.dictBtnText}>{es ? 'Modo de Cuestionario' : 'Quiz Mode'}</Text>
+                    <Text style={styles.dictBtnSub}>{es ? 'Pon a prueba a tu equipo' : 'Test your crew'}</Text>
                   </AnimatedPressable>
                 </View>
 
@@ -462,13 +490,13 @@ const styles = StyleSheet.create({
   dictBtn: {
     backgroundColor: WT.bgCard,
     borderRadius: 12,
-    paddingVertical: 12,
-    paddingHorizontal: 14,
+    paddingVertical: 9,
+    paddingHorizontal: 12,
     borderWidth: 1,
     borderColor: WT.border,
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 10,
+    gap: 9,
   },
   uploadBtn: {
     backgroundColor: WT.bgCard,

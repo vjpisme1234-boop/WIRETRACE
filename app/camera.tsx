@@ -16,6 +16,7 @@ import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import { Flashlight, FlashlightOff, Image as ImageIcon, Minus, Plus, X } from 'lucide-react-native';
 import { WT } from '@/constants/wiretrace';
 import { AppLanguage, isSpanish, loadAppLanguage } from '@/utils/app-language';
+import PulsingLogo from '@/components/PulsingLogo';
 
 function resolveImageSource(source: string | number | ImageSourcePropType | undefined): ImageSourcePropType {
   if (!source) return { uri: '' };
@@ -408,7 +409,10 @@ export default function CameraScreen() {
           <X size={22} color="#FFFFFF" />
         </AnimatedPressable>
 
-        <Text style={styles.topBarTitle}>{es ? 'Escanear Esquema' : 'Scan Schematic'}</Text>
+        <View style={styles.topBarCenter}>
+          <PulsingLogo size={18} />
+          <Text style={styles.topBarTitle}>{es ? 'Escanear Esquema' : 'Scan Schematic'}</Text>
+        </View>
 
         {/* Torch toggle */}
         <AnimatedPressable
@@ -536,6 +540,11 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     paddingHorizontal: 16,
     paddingBottom: 12,
+  },
+  topBarCenter: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
   },
   topBarTitle: {
     fontSize: 16,

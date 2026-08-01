@@ -11,6 +11,8 @@ export const STORAGE_KEYS = {
   SETTINGS: 'wiretrace_settings',
   UI_PREFS: 'wiretrace_ui_prefs',
   FREE_SCAN_COUNT: 'wiretrace_free_scan_count',
+  TEACHING_PROFILES: 'wiretrace_teaching_profiles',
+  ACTIVE_TEACHING_PROFILE: 'wiretrace_active_teaching_profile',
 } as const;
 
 export const WT = {

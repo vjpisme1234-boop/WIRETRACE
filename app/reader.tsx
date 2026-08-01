@@ -24,6 +24,8 @@ import { answerSchematicQuestion, continueReadingSteps, generateReadingSteps } f
 import { JunctionChoice, JunctionOption, matchJunctionAnswer } from '@/utils/schematic-graph';
 import { loadTTSSettings, speakText, stopSpeech } from '@/utils/tts';
 import { DEFAULT_UI_PREFERENCES, loadUIPreferences } from '@/utils/ui-preferences';
+import PulsingLogo from '@/components/PulsingLogo';
+import { getActiveProfile } from '@/utils/teaching-profiles';
 
 const WIRE_COLOR_MAP: Record<string, string> = {
   red: '#FF3B30',
@@ -265,6 +267,7 @@ export default function ReaderScreen() {
     console.log('[Reader] Resolving deferred start point', { label });
     try {
       const dir: 'forward' | 'backward' = params.direction === 'backward' ? 'backward' : 'forward';
+      const activeProfile = await getActiveProfile();
       const { steps: newSteps, pendingChoice } = await generateReadingSteps(
         {
           wires: schematicForHelp.wires,
@@ -275,7 +278,8 @@ export default function ReaderScreen() {
         },
         dir,
         label,
-        schematicForHelp.branchChoices
+        schematicForHelp.branchChoices,
+        activeProfile?.verbosity
       );
 
       const updated: SchematicAnalysis = {
@@ -332,6 +336,7 @@ export default function ReaderScreen() {
     try {
       const dir: 'forward' | 'backward' = params.direction === 'backward' ? 'backward' : 'forward';
       const priorGenerationOrderSteps = schematicForHelp.readingSteps;
+      const activeProfile = await getActiveProfile();
 
       const { steps: newSteps, pendingChoice } = await continueReadingSteps(
         {
@@ -344,7 +349,8 @@ export default function ReaderScreen() {
         dir,
         priorGenerationOrderSteps,
         pendingJunction.terminal,
-        option.to
+        option.to,
+        activeProfile?.verbosity
       );
 
       const updatedBranchChoices = { ...(schematicForHelp.branchChoices || {}), [pendingJunction.terminal]: option.to };
@@ -436,11 +442,20 @@ export default function ReaderScreen() {
     if (steps.length === 0) return;
     console.log('[Reader] Re-read button pressed', { step: currentIndex });
     const step = steps[currentIndex];
-    speakText(step.instruction, () => {
+    let noteText: string | undefined;
+    if (schematicForHelp) {
+      const wire = step.wireLabel ? schematicForHelp.wires.find((w) => w.label === step.wireLabel) : undefined;
+      const comp = step.componentLabel
+        ? schematicForHelp.components.find((c) => c.label === step.componentLabel)
+        : undefined;
+      noteText = wire?.userNote || comp?.userNote;
+    }
+    const spoken = noteText ? `${step.instruction} ${noteText}` : step.instruction;
+    speakText(spoken, () => {
       console.log('[Reader] Speech done for step', currentIndex);
       startVoiceListening();
     });
-  }, [currentIndex, steps, startVoiceListening, stopVoiceListening]);
+  }, [currentIndex, schematicForHelp, steps, startVoiceListening, stopVoiceListening]);
 
   const handleHelpQuestion = useCallback(async (question: string) => {
     if (!schematicForHelp) {
@@ -630,11 +645,23 @@ export default function ReaderScreen() {
       useNativeDriver: false,
     }).start();
 
-    speakText(step.instruction, () => {
+    // Read the user's own voice note for this wire/component, if any, right
+    // after the AI's instruction — it's context only the user knows.
+    let noteText: string | undefined;
+    if (schematicForHelp) {
+      const wire = step.wireLabel ? schematicForHelp.wires.find((w) => w.label === step.wireLabel) : undefined;
+      const comp = step.componentLabel
+        ? schematicForHelp.components.find((c) => c.label === step.componentLabel)
+        : undefined;
+      noteText = wire?.userNote || comp?.userNote;
+    }
+    const spoken = noteText ? `${step.instruction} ${noteText}` : step.instruction;
+
+    speakText(spoken, () => {
       console.log('[Reader] Speech done for step', currentIndex);
       startVoiceListening();
     });
-  }, [animateIn, currentIndex, loading, progressAnim, startVoiceListening, steps, stopVoiceListening]);
+  }, [animateIn, currentIndex, loading, progressAnim, schematicForHelp, startVoiceListening, steps, stopVoiceListening]);
 
   const handleToggleVoiceNext = () => {
     const next = !voiceNextEnabled;
@@ -759,9 +786,12 @@ export default function ReaderScreen() {
               color={isLightMode ? stylesColors.lightSecondary : isDark ? stylesColors.darkSecondary : WT.textSecondary}
             />
           </AnimatedPressable>
-          <Text style={[styles.counterText, isLightMode && styles.counterTextLight, isDark && styles.counterTextDark]}>
-            {counterText}
-          </Text>
+          <View style={styles.topBarCenter}>
+            <PulsingLogo size={16} />
+            <Text style={[styles.counterText, isLightMode && styles.counterTextLight, isDark && styles.counterTextDark]}>
+              {counterText}
+            </Text>
+          </View>
           <AnimatedPressable onPress={handleToggleVoiceNext} style={styles.autoBtn} scaleValue={0.9}>
             {voiceNextEnabled ? (
               <Mic size={20} color={listeningForVoice ? WT.green : WT.blue} />
@@ -935,6 +965,11 @@ const styles = StyleSheet.create({
     height: 44,
     alignItems: 'center',
     justifyContent: 'center',
+  },
+  topBarCenter: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
   },
   counterText: {
     fontSize: 14,

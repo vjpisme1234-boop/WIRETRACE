@@ -9,9 +9,10 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { router, useFocusEffect } from 'expo-router';
-import { ArrowLeft, BookOpen } from 'lucide-react-native';
+import { ArrowLeft } from 'lucide-react-native';
 import { WT } from '@/constants/wiretrace';
 import { AppLanguage, isSpanish, loadAppLanguage } from '@/utils/app-language';
+import PulsingLogo from '@/components/PulsingLogo';
 
 // ---------------------------------------------------------------------------
 // Symbol dictionary data
@@ -241,7 +242,7 @@ export default function SymbolDictionaryScreen() {
           <ArrowLeft size={22} color={WT.blue} />
         </AnimatedPressable>
         <View style={styles.headerCenter}>
-          <BookOpen size={18} color={WT.blue} />
+          <PulsingLogo size={20} />
           <Text style={styles.headerTitle}>{es ? 'Diccionario de Símbolos' : 'Symbol Dictionary'}</Text>
         </View>
         <View style={{ width: 44 }} />

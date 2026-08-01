@@ -17,6 +17,7 @@ import { getSchematic, updateSchematic } from '@/utils/schematic-storage';
 import * as FileSystem from 'expo-file-system/legacy';
 import { getSymbolClarification, identifySymbolRegion } from '@/utils/openrouter';
 import { AppLanguage, isSpanish, loadAppLanguage } from '@/utils/app-language';
+import PulsingLogo from '@/components/PulsingLogo';
 
 const clarificationCache = new Map<string, string>();
 
@@ -155,7 +156,10 @@ export default function IdentifySymbolScreen() {
       {/* Handle + header */}
       <View style={styles.sheetHandle} />
       <View style={styles.header}>
-        <Text style={styles.headerTitle}>{es ? '¿Qué símbolo es este?' : 'What is this symbol?'}</Text>
+        <View style={styles.headerCenter}>
+          <PulsingLogo size={18} />
+          <Text style={styles.headerTitle}>{es ? '¿Qué símbolo es este?' : 'What is this symbol?'}</Text>
+        </View>
         <AnimatedPressable onPress={handleDismiss} style={styles.closeBtn} scaleValue={0.9}>
           <X size={20} color={WT.textSecondary} />
         </AnimatedPressable>
@@ -300,6 +304,12 @@ const styles = StyleSheet.create({
     paddingBottom: 12,
     borderBottomWidth: 1,
     borderBottomColor: WT.border,
+  },
+  headerCenter: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    flexShrink: 1,
   },
   headerTitle: {
     fontSize: 18,

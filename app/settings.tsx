@@ -15,14 +15,29 @@ import { ArrowLeft, CheckCircle, Info, Key, Mic, Zap } from 'lucide-react-native
 import { WT, STORAGE_KEYS } from '@/constants/wiretrace';
 import { loadTTSSettings, saveTTSSettings, speakTextWithSettings, stopSpeech, TTSSettings } from '@/utils/tts';
 import { DEFAULT_UI_PREFERENCES, LayoutPreset, loadUIPreferences, saveUIPreferences, UIPreferences, VisualMode, VisionProviderPreference } from '@/utils/ui-preferences';
+import PulsingLogo from '@/components/PulsingLogo';
+import { ExpoSpeechRecognitionModule, useSpeechRecognitionEvent } from 'expo-speech-recognition';
+import { parseTeachingProfile } from '@/utils/openrouter';
+import {
+  getActiveProfileId as loadActiveProfileId,
+  loadTeachingProfiles,
+  saveTeachingProfiles,
+  setActiveProfileId as persistActiveProfileId,
+  TeachingProfile,
+} from '@/utils/teaching-profiles';
+import { X } from 'lucide-react-native';
 
 function AnimatedPressable({
   onPress,
+  onLongPress,
+  onPressOut: onPressOutProp,
   style,
   children,
   scaleValue = 0.97,
 }: {
   onPress?: () => void;
+  onLongPress?: () => void;
+  onPressOut?: () => void;
   style?: object | object[];
   children: React.ReactNode;
   scaleValue?: number;
@@ -34,7 +49,17 @@ function AnimatedPressable({
     Animated.spring(scale, { toValue: 1, useNativeDriver: true, speed: 50, bounciness: 4 }).start();
   return (
     <Animated.View style={{ transform: [{ scale }] }}>
-      <Pressable onPressIn={animIn} onPressOut={animOut} onPress={onPress} style={style}>
+      <Pressable
+        onPressIn={animIn}
+        onPressOut={() => {
+          animOut();
+          onPressOutProp?.();
+        }}
+        onPress={onPress}
+        onLongPress={onLongPress}
+        delayLongPress={450}
+        style={style}
+      >
         {children}
       </Pressable>
     </Animated.View>
@@ -120,22 +145,38 @@ export default function SettingsScreen() {
   const [testingVoice, setTestingVoice] = useState(false);
   const hadAnyPaidKeyRef = useRef(false);
 
+  // Teaching profiles — hold the mic to speak a new one
+  const [profiles, setProfiles] = useState<TeachingProfile[]>([]);
+  const [activeProfileId, setActiveProfileId] = useState<string | null>(null);
+  const [profileListening, setProfileListening] = useState(false);
+  const [profileStatus, setProfileStatus] = useState<string | null>(null);
+  const profileActiveRef = useRef(false);
+  const profileTranscriptRef = useRef('');
+
   useEffect(() => {
     const load = async () => {
       console.log('[Settings] Loading settings');
-      const [storedKey, storedOpenAIKey, storedAnthropicKey, ttsSettings, storedUiPrefs] = await Promise.all([
-        SecureStore.getItemAsync(STORAGE_KEYS.API_KEY),
-        SecureStore.getItemAsync(STORAGE_KEYS.OPENAI_API_KEY),
-        SecureStore.getItemAsync(STORAGE_KEYS.ANTHROPIC_API_KEY),
-        loadTTSSettings(),
-        loadUIPreferences(),
-      ]);
-      if (storedKey) setApiKey(storedKey);
-      if (storedOpenAIKey) setOpenAIApiKey(storedOpenAIKey);
-      if (storedAnthropicKey) setAnthropicApiKey(storedAnthropicKey);
-      hadAnyPaidKeyRef.current = !!(storedKey || storedOpenAIKey || storedAnthropicKey);
-      setSettings(ttsSettings);
-      setUiPrefs(storedUiPrefs);
+      try {
+        const [storedKey, storedOpenAIKey, storedAnthropicKey, ttsSettings, storedUiPrefs, storedProfiles, storedActiveId] = await Promise.all([
+          SecureStore.getItemAsync(STORAGE_KEYS.API_KEY),
+          SecureStore.getItemAsync(STORAGE_KEYS.OPENAI_API_KEY),
+          SecureStore.getItemAsync(STORAGE_KEYS.ANTHROPIC_API_KEY),
+          loadTTSSettings(),
+          loadUIPreferences(),
+          loadTeachingProfiles(),
+          loadActiveProfileId(),
+        ]);
+        if (storedKey) setApiKey(storedKey);
+        if (storedOpenAIKey) setOpenAIApiKey(storedOpenAIKey);
+        if (storedAnthropicKey) setAnthropicApiKey(storedAnthropicKey);
+        hadAnyPaidKeyRef.current = !!(storedKey || storedOpenAIKey || storedAnthropicKey);
+        setSettings(ttsSettings);
+        setUiPrefs(storedUiPrefs);
+        setProfiles(storedProfiles);
+        setActiveProfileId(storedActiveId);
+      } catch (e) {
+        console.error('[Settings] Failed to load settings', e);
+      }
     };
     load();
   }, []);
@@ -190,6 +231,99 @@ export default function SettingsScreen() {
 
   const es = settings.language === 'spanish';
 
+  const startProfileRecording = async () => {
+    if (profileListening) return;
+    console.log('[Settings] Starting teaching profile recording');
+    try {
+      if (!ExpoSpeechRecognitionModule.isRecognitionAvailable()) {
+        setProfileStatus(es ? 'Reconocimiento de voz no disponible' : 'Voice recognition unavailable');
+        return;
+      }
+      const permission = await ExpoSpeechRecognitionModule.requestPermissionsAsync();
+      if (!permission.granted) {
+        setProfileStatus(es ? 'Se requiere permiso de micrófono' : 'Microphone permission required');
+        return;
+      }
+      profileActiveRef.current = true;
+      profileTranscriptRef.current = '';
+      setProfileStatus(es ? 'Escuchando... describe el perfil' : 'Listening... describe the profile');
+      setProfileListening(true);
+      ExpoSpeechRecognitionModule.start({
+        lang: es ? 'es-US' : 'en-US',
+        interimResults: true,
+        continuous: true,
+        maxAlternatives: 1,
+      });
+    } catch (e) {
+      console.error('[Settings] Failed to start profile recording', e);
+      setProfileStatus(es ? 'No se pudo iniciar el micrófono' : 'Could not start microphone');
+    }
+  };
+
+  const stopProfileRecording = () => {
+    if (!profileActiveRef.current) return;
+    profileActiveRef.current = false;
+    setProfileListening(false);
+    try {
+      ExpoSpeechRecognitionModule.stop();
+    } catch (e) {
+      console.error('[Settings] Failed to stop profile recording', e);
+    }
+  };
+
+  const processProfileResult = async () => {
+    const transcript = profileTranscriptRef.current.trim();
+    if (!transcript) {
+      setProfileStatus(null);
+      return;
+    }
+    setProfileStatus(es ? 'Creando perfil...' : 'Creating profile...');
+    try {
+      const parsed = await parseTeachingProfile(transcript);
+      const newProfile: TeachingProfile = {
+        id: `profile_${Date.now()}`,
+        name: parsed.name,
+        speed: parsed.speed,
+        verbosity: parsed.verbosity,
+      };
+      const updatedProfiles = [...profiles, newProfile];
+      setProfiles(updatedProfiles);
+      await saveTeachingProfiles(updatedProfiles);
+      await selectProfile(newProfile.id, updatedProfiles);
+      setProfileStatus(
+        es ? `Perfil "${newProfile.name}" creado y activado` : `Profile "${newProfile.name}" created and active`
+      );
+      console.log('[Settings] Teaching profile created', newProfile);
+    } catch (e) {
+      console.error('[Settings] Failed to create teaching profile', e);
+      setProfileStatus(es ? 'No se pudo crear el perfil' : 'Could not create profile');
+    } finally {
+      setTimeout(() => setProfileStatus(null), 3000);
+    }
+  };
+
+  const selectProfile = async (id: string, list?: TeachingProfile[]) => {
+    const source = list ?? profiles;
+    const profile = source.find((p) => p.id === id);
+    if (!profile) return;
+    setActiveProfileId(id);
+    await persistActiveProfileId(id);
+    updateSettings({ speed: profile.speed });
+    await saveTTSSettings({ ...settings, speed: profile.speed });
+    console.log('[Settings] Teaching profile selected', profile);
+  };
+
+  const deleteProfile = async (id: string) => {
+    const updatedProfiles = profiles.filter((p) => p.id !== id);
+    setProfiles(updatedProfiles);
+    await saveTeachingProfiles(updatedProfiles);
+    if (activeProfileId === id) {
+      setActiveProfileId(null);
+      await persistActiveProfileId(null);
+    }
+    console.log('[Settings] Teaching profile deleted', { id });
+  };
+
   const handleTestVoice = async () => {
     if (testingVoice) {
       await stopSpeech();
@@ -208,6 +342,25 @@ export default function SettingsScreen() {
     });
   };
 
+  useSpeechRecognitionEvent('result', (event: any) => {
+    if (!profileActiveRef.current) return;
+    const rawResults = Array.isArray(event?.results) ? event.results : [];
+    for (let i = rawResults.length - 1; i >= 0; i -= 1) {
+      const text = rawResults[i]?.transcript;
+      if (typeof text === 'string' && text.trim()) {
+        profileTranscriptRef.current = text.trim();
+        break;
+      }
+    }
+  });
+
+  useSpeechRecognitionEvent('end', () => {
+    if (profileListening) {
+      setProfileListening(false);
+      processProfileResult();
+    }
+  });
+
   return (
     <View style={[styles.root, { paddingTop: insets.top }]}>
       {/* Header */}
@@ -218,7 +371,10 @@ export default function SettingsScreen() {
         }} style={styles.backBtn} scaleValue={0.9}>
           <ArrowLeft size={22} color={WT.blue} />
         </AnimatedPressable>
-        <Text style={styles.headerTitle}>{es ? 'Ajustes' : 'Settings'}</Text>
+        <View style={styles.headerCenter}>
+          <PulsingLogo size={18} />
+          <Text style={styles.headerTitle}>{es ? 'Ajustes' : 'Settings'}</Text>
+        </View>
         <AnimatedPressable onPress={handleSave} style={styles.saveBtn} scaleValue={0.9}>
           {saved ? (
             <CheckCircle size={20} color={WT.green} />
@@ -542,6 +698,81 @@ export default function SettingsScreen() {
           </Text>
         </View>
 
+        <View style={styles.section}>
+          <View style={styles.sectionHeader}>
+            <Mic size={16} color={WT.blue} />
+            <Text style={styles.sectionTitle}>{es ? 'Notas de Voz' : 'Voice Notes'}</Text>
+          </View>
+          <SegmentControl
+            options={['visible', 'audio'] as const}
+            value={uiPrefs.notesVisible ? 'visible' : 'audio'}
+            onChange={(v) => {
+              console.log('[Settings] Notes visibility changed', { notesVisible: v === 'visible' });
+              updateUiPrefs({ notesVisible: v === 'visible' });
+            }}
+            labels={es ? { visible: 'Mostrar texto', audio: 'Solo audio' } : { visible: 'Show text', audio: 'Audio only' }}
+          />
+          <Text style={styles.fieldHint}>
+            {es
+              ? 'Al grabar una nota de voz en un cable o componente, elige si se muestra como texto en pantalla o solo se escucha en voz alta.'
+              : 'When you record a voice note on a wire or component, choose whether it shows as text on screen or only plays back out loud.'}
+          </Text>
+        </View>
+
+        <View style={styles.section}>
+          <View style={styles.sectionHeader}>
+            <Mic size={16} color={WT.blue} />
+            <Text style={styles.sectionTitle}>{es ? 'Perfiles de Enseñanza' : 'Teaching Profiles'}</Text>
+          </View>
+          <Text style={styles.fieldHint}>
+            {es
+              ? 'Configura la lectura por cuadrilla — velocidad y nivel de detalle. Mantén presionado para hablar uno nuevo, ej. "Aprendices, más despacio y explica los términos".'
+              : 'Set up reading behavior per crew — speed and detail level. Hold to speak a new one, e.g. "Apprentices, go slower and explain terminology."'}
+          </Text>
+
+          {profiles.length > 0 && (
+            <View style={styles.profileList}>
+              {profiles.map((profile) => {
+                const isActive = profile.id === activeProfileId;
+                return (
+                  <View key={profile.id} style={[styles.profileChip, isActive && styles.profileChipActive]}>
+                    <Pressable onPress={() => selectProfile(profile.id)} style={{ flex: 1 }}>
+                      <Text style={[styles.profileChipName, isActive && styles.profileChipNameActive]}>
+                        {profile.name}
+                      </Text>
+                      <Text style={styles.profileChipMeta}>
+                        {profile.speed} · {profile.verbosity}
+                      </Text>
+                    </Pressable>
+                    <Pressable onPress={() => deleteProfile(profile.id)} style={styles.profileDeleteBtn}>
+                      <X size={13} color={WT.textSecondary} />
+                    </Pressable>
+                  </View>
+                );
+              })}
+            </View>
+          )}
+
+          <AnimatedPressable
+            onLongPress={startProfileRecording}
+            onPressOut={stopProfileRecording}
+            style={[styles.profileRecordBtn, profileListening && styles.profileRecordBtnActive]}
+            scaleValue={0.97}
+          >
+            <Mic size={16} color={profileListening ? WT.green : WT.blue} />
+            <Text style={styles.profileRecordBtnText}>
+              {profileListening
+                ? es
+                  ? 'Escuchando... suelta para guardar'
+                  : 'Listening... release to save'
+                : es
+                ? 'Mantén presionado para crear un perfil'
+                : 'Hold to create a profile'}
+            </Text>
+          </AnimatedPressable>
+          {profileStatus && <Text style={styles.fieldHint}>{profileStatus}</Text>}
+        </View>
+
         {/* About */}
         <View style={styles.section}>
           <View style={styles.sectionHeader}>
@@ -588,6 +819,11 @@ const styles = StyleSheet.create({
     height: 44,
     alignItems: 'center',
     justifyContent: 'center',
+  },
+  headerCenter: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
   },
   headerTitle: {
     fontSize: 17,
@@ -662,6 +898,68 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: WT.textTertiary,
     lineHeight: 17,
+  },
+  profileList: {
+    gap: 8,
+    marginTop: 10,
+    marginBottom: 4,
+  },
+  profileChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: WT.bgCard,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: WT.border,
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    gap: 8,
+  },
+  profileChipActive: {
+    borderColor: WT.blue,
+    backgroundColor: WT.blueMuted,
+  },
+  profileChipName: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: WT.textPrimary,
+  },
+  profileChipNameActive: {
+    color: WT.blue,
+  },
+  profileChipMeta: {
+    fontSize: 11,
+    color: WT.textSecondary,
+    textTransform: 'capitalize',
+  },
+  profileDeleteBtn: {
+    width: 26,
+    height: 26,
+    borderRadius: 13,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: WT.bgCardAlt,
+  },
+  profileRecordBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    backgroundColor: WT.bgCardAlt,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: WT.border,
+    paddingVertical: 10,
+    marginTop: 6,
+  },
+  profileRecordBtnActive: {
+    borderColor: WT.green,
+    backgroundColor: WT.greenMuted,
+  },
+  profileRecordBtnText: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: WT.textPrimary,
   },
   voiceGuideCard: {
     backgroundColor: WT.bgCard,

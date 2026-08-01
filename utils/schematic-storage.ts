@@ -12,6 +12,8 @@ export interface WireInfo {
   toPoint: string;
   voltage?: string;
   confidence?: number;
+  /** Voice note recorded by the user, read aloud when the Reader reaches this wire. */
+  userNote?: string;
 }
 
 export interface ComponentInfo {
@@ -22,6 +24,8 @@ export interface ComponentInfo {
   isUnknown: boolean;
   userIdentifiedAs?: string;
   confidence?: number;
+  /** Voice note recorded by the user, read aloud when the Reader reaches this component. */
+  userNote?: string;
 }
 
 export interface Connection {
@@ -68,6 +72,16 @@ export interface SchematicAnalysis {
   pendingJunction?: JunctionChoice | null;
   /** Path choices the user has made at branch terminals: terminal -> chosen "to". */
   branchChoices?: Record<string, string>;
+  /** Structural inconsistencies caught by deterministic post-validation (e.g. a connection referencing a wire/component that was never declared). Informational only — not blocking. */
+  validationWarnings?: string[];
+  /** True once a user has verified this scan and saved it as a trusted reference for their team. */
+  isStandard?: boolean;
+  /** Display name for the standard, if different from the schematic's own name. */
+  standardName?: string;
+  /** User-dragged positions for diagram nodes in the Schematic View, keyed by node key. Overrides the auto-layout. */
+  nodePositions?: Record<string, { x: number; y: number }>;
+  /** User-dragged positions for note annotation bubbles in the Schematic View, keyed by wire/component id. */
+  notePositions?: Record<string, { x: number; y: number }>;
 }
 
 async function ensureDir(): Promise<void> {
@@ -115,6 +129,12 @@ export async function loadSchematics(): Promise<SchematicAnalysis[]> {
     console.error('[Storage] Failed to load schematics', e);
     return [];
   }
+}
+
+/** Verified schematics a user has explicitly saved as a trusted team reference. */
+export async function listStandards(): Promise<SchematicAnalysis[]> {
+  const all = await loadSchematics();
+  return all.filter((s) => s.isStandard);
 }
 
 export async function saveSchematic(schematic: SchematicAnalysis): Promise<void> {

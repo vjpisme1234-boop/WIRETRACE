@@ -11,7 +11,7 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { router, useFocusEffect } from 'expo-router';
-import { ArrowLeft, BookMarked, Clock, GraduationCap } from 'lucide-react-native';
+import { ArrowLeft, BookMarked, Clock } from 'lucide-react-native';
 import { WT } from '@/constants/wiretrace';
 import { AppLanguage, isSpanish, loadAppLanguage } from '@/utils/app-language';
 import { listStandards, SchematicAnalysis } from '@/utils/schematic-storage';
@@ -85,17 +85,6 @@ function StandardCard({ item, language }: { item: SchematicAnalysis; language: A
           <Text style={styles.cardTimeText}>{dateDisplay}</Text>
         </View>
       </View>
-      <Pressable
-        onPress={(e) => {
-          e.stopPropagation?.();
-          console.log('[Standards] Starting quiz', { id: item.id });
-          router.push({ pathname: '/quiz', params: { schematicId: item.id } });
-        }}
-        style={styles.quizBtn}
-        hitSlop={8}
-      >
-        <GraduationCap size={18} color={WT.blue} />
-      </Pressable>
     </AnimatedPressable>
   );
 }
@@ -252,16 +241,6 @@ const styles = StyleSheet.create({
     fontSize: 22,
     color: WT.textTertiary,
     fontWeight: '300',
-  },
-  quizBtn: {
-    width: 36,
-    height: 36,
-    borderRadius: 10,
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: WT.blueMuted,
-    borderWidth: 1,
-    borderColor: WT.blueDim,
   },
   emptyState: {
     alignItems: 'center',

@@ -137,6 +137,13 @@ export default function RootLayout() {
                     presentation: 'modal',
                   }}
                 />
+                <Stack.Screen
+                  name="standards"
+                  options={{
+                    headerShown: false,
+                    presentation: 'modal',
+                  }}
+                />
               </Stack>
               <SystemBars style={"auto"} />
               </GestureHandlerRootView>

@@ -1227,8 +1227,8 @@ export default function AnalyzeScreen() {
               <Highlighter size={15} color={WT.yellow} />
               <Text style={styles.highlightHintText}>
                 {es
-                  ? 'Toca una fila para resaltarla, o el lápiz ✎ para corregir algo que la AI detectó mal.'
-                  : 'Tap a row to highlight it, or the pencil ✎ to correct anything the AI got wrong.'}
+                  ? 'Mantén presionada una fila para decir una corrección en voz alta, o usa el lápiz ✎ para escribirla.'
+                  : 'Long-press a row to say a correction out loud for the AI to fix, or use the pencil ✎ to type it.'}
               </Text>
             </View>
 

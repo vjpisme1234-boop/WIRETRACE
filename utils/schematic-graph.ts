@@ -1,4 +1,4 @@
-import type { Connection } from '@/utils/schematic-storage';
+import type { Connection, ReadingStep, WireInfo } from '@/utils/schematic-storage';
 
 export interface JunctionOption {
   to: string;
@@ -68,4 +68,26 @@ export function matchJunctionAnswer(transcript: string, junction: JunctionChoice
   }
 
   return null;
+}
+
+function normalizeWireLabel(value?: string): string {
+  return String(value || '')
+    .toLowerCase()
+    .replace(/^wire\s+/, '')
+    .trim();
+}
+
+/**
+ * The reader follows a single linear path per generation pass, and the AI
+ * only stops for a branch when it self-reports one via pendingChoice — it
+ * can reach the end of a path and declare the schematic "complete" without
+ * ever having produced a step for every wire (e.g. a parallel run it never
+ * traced). This checks deterministically, against the wires the schematic
+ * analysis actually found, rather than trusting the AI's own bookkeeping.
+ */
+export function getUncoveredWires(wires: WireInfo[], steps: ReadingStep[]): WireInfo[] {
+  const covered = new Set(
+    steps.map((s) => normalizeWireLabel(s.wireLabel)).filter((label) => label.length > 0)
+  );
+  return wires.filter((w) => !covered.has(normalizeWireLabel(w.label)));
 }

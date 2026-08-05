@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Animated,
   Pressable,
@@ -21,7 +21,7 @@ import { ExpoSpeechRecognitionModule, useSpeechRecognitionEvent } from 'expo-spe
 import { WT } from '@/constants/wiretrace';
 import { getSchematic, saveSchematic, ReadingStep, SchematicAnalysis } from '@/utils/schematic-storage';
 import { answerSchematicQuestion, continueReadingSteps, generateReadingSteps } from '@/utils/openrouter';
-import { JunctionChoice, JunctionOption, matchJunctionAnswer } from '@/utils/schematic-graph';
+import { getUncoveredWires, JunctionChoice, JunctionOption, matchJunctionAnswer } from '@/utils/schematic-graph';
 import { loadTTSSettings, speakText, stopSpeech } from '@/utils/tts';
 import { DEFAULT_UI_PREFERENCES, loadUIPreferences } from '@/utils/ui-preferences';
 import PulsingLogo from '@/components/PulsingLogo';
@@ -104,6 +104,7 @@ export default function ReaderScreen() {
   const [awaitingStartAnswer, setAwaitingStartAnswer] = useState(false);
   const [pendingJunction, setPendingJunction] = useState<JunctionChoice | null>(null);
   const [resolvingJunction, setResolvingJunction] = useState(false);
+  const [continuingUncovered, setContinuingUncovered] = useState(false);
 
   const contentOpacity = useRef(new Animated.Value(0)).current;
   const contentTranslate = useRef(new Animated.Value(20)).current;
@@ -412,6 +413,63 @@ export default function ReaderScreen() {
       startVoiceListening('junctionPrompt');
     });
   }, [pendingJunction, speechLanguage, voiceNextEnabled, resolveJunctionChoice, startVoiceListening]);
+
+  const uncoveredWires = useMemo(() => {
+    if (!completed || !schematicForHelp) return [];
+    return getUncoveredWires(schematicForHelp.wires, steps);
+  }, [completed, schematicForHelp, steps]);
+
+  const handleContinueUncovered = useCallback(async () => {
+    if (!schematicForHelp || uncoveredWires.length === 0) return;
+    const nextLabel = uncoveredWires[0].label;
+    const priorLength = steps.length;
+    setContinuingUncovered(true);
+    setVoiceStatus(speechLanguage === 'spanish' ? 'Generando pasos restantes...' : 'Generating remaining steps...');
+    console.log('[Reader] Continuing with uncovered wire', { label: nextLabel, remaining: uncoveredWires.length });
+    try {
+      const dir: 'forward' | 'backward' = params.direction === 'backward' ? 'backward' : 'forward';
+      const priorGenerationOrderSteps = schematicForHelp.readingSteps;
+      const activeProfile = await getActiveProfile();
+      const { steps: newSteps, pendingChoice } = await generateReadingSteps(
+        {
+          wires: schematicForHelp.wires,
+          components: schematicForHelp.components,
+          connections: schematicForHelp.connections,
+          unknownSymbols: schematicForHelp.unknownSymbols,
+          summary: '',
+        },
+        dir,
+        nextLabel,
+        schematicForHelp.branchChoices,
+        activeProfile?.verbosity
+      );
+
+      const updatedGenerationOrderSteps = [...priorGenerationOrderSteps, ...newSteps];
+      const updated: SchematicAnalysis = {
+        ...schematicForHelp,
+        readingSteps: updatedGenerationOrderSteps,
+        pendingJunction: pendingChoice,
+      };
+      await saveSchematic(updated);
+      setSchematicForHelp(updated);
+      setPendingJunction(pendingChoice);
+
+      const newDisplaySteps = dir === 'backward' ? [...newSteps].reverse() : newSteps;
+      setSteps((prev) => {
+        const appended = [...prev, ...newDisplaySteps];
+        return appended.map((s, i) => ({ ...s, stepNumber: i + 1 }));
+      });
+      setCurrentIndex(priorLength);
+      setCompleted(false);
+    } catch (e) {
+      console.error('[Reader] Failed to continue with uncovered wires', e);
+      setVoiceError(
+        speechLanguage === 'spanish' ? 'No se pudo continuar. Intenta de nuevo.' : 'Could not continue. Try again.'
+      );
+    } finally {
+      setContinuingUncovered(false);
+    }
+  }, [schematicForHelp, uncoveredWires, steps.length, params.direction, speechLanguage]);
 
   const handleNext = useCallback(() => {
     stopVoiceListening();
@@ -739,6 +797,34 @@ export default function ReaderScreen() {
           {steps.length}
           {speechLanguage === 'spanish' ? ' pasos leídos correctamente' : ' steps read successfully'}
         </Text>
+        {uncoveredWires.length > 0 && (
+          <View style={styles.uncoveredBox}>
+            <Text style={styles.uncoveredTitle}>
+              {speechLanguage === 'spanish'
+                ? `${uncoveredWires.length} cable(s) no estaban en este camino`
+                : `${uncoveredWires.length} wire(s) weren't on this path`}
+            </Text>
+            <Text style={styles.uncoveredList}>
+              {uncoveredWires.map((w) => w.label).join(', ')}
+            </Text>
+            <AnimatedPressable
+              onPress={handleContinueUncovered}
+              style={[styles.doneBtn, styles.continueUncoveredBtn]}
+              disabled={continuingUncovered}
+            >
+              <Text style={styles.doneBtnText}>
+                {continuingUncovered
+                  ? speechLanguage === 'spanish'
+                    ? 'Generando...'
+                    : 'Generating...'
+                  : speechLanguage === 'spanish'
+                  ? `Leer cable ${uncoveredWires[0].label}`
+                  : `Read wire ${uncoveredWires[0].label}`}
+              </Text>
+            </AnimatedPressable>
+            {voiceError ? <Text style={styles.voiceErrorText}>{voiceError}</Text> : null}
+          </View>
+        )}
         <AnimatedPressable onPress={handleBack} style={styles.doneBtn}>
           <Text style={styles.doneBtnText}>{speechLanguage === 'spanish' ? 'Listo' : 'Done'}</Text>
         </AnimatedPressable>
@@ -1265,12 +1351,38 @@ const styles = StyleSheet.create({
     fontSize: 16,
     color: WT.textSecondary,
   },
+  uncoveredBox: {
+    backgroundColor: WT.bgCard,
+    borderRadius: 12,
+    padding: 14,
+    borderWidth: 1,
+    borderColor: WT.yellow,
+    gap: 6,
+    alignItems: 'center',
+    marginTop: 8,
+  },
+  uncoveredTitle: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: WT.yellow,
+    textAlign: 'center',
+  },
+  uncoveredList: {
+    fontSize: 13,
+    color: WT.textSecondary,
+    textAlign: 'center',
+  },
   doneBtn: {
     backgroundColor: WT.blue,
     borderRadius: 14,
     paddingVertical: 16,
     paddingHorizontal: 48,
     marginTop: 8,
+  },
+  continueUncoveredBtn: {
+    paddingVertical: 12,
+    paddingHorizontal: 24,
+    marginTop: 2,
   },
   doneBtnText: {
     fontSize: 17,

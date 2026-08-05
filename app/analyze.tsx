@@ -239,6 +239,8 @@ export default function AnalyzeScreen() {
   const [correctionsMade, setCorrectionsMade] = useState(0);
   const [standardPromptDismissed, setStandardPromptDismissed] = useState(false);
   const [savingStandard, setSavingStandard] = useState(false);
+  const [connectionsExpanded, setConnectionsExpanded] = useState(false);
+  const [wiresExpanded, setWiresExpanded] = useState(false);
 
   const pulseAnim = useRef(new Animated.Value(0.6)).current;
 
@@ -1244,7 +1246,7 @@ export default function AnalyzeScreen() {
               {schematic.wires.length === 0 ? (
                 <Text style={styles.emptyCardText}>{es ? 'No se detectaron cables' : 'No wires detected'}</Text>
               ) : (
-                schematic.wires.slice(0, wireDisplayLimit).map((wire) => (
+                schematic.wires.slice(0, wiresExpanded ? schematic.wires.length : wireDisplayLimit).map((wire) => (
                   <AnimatedPressable
                     key={wire.id}
                     onPress={() => toggleHighlight(`wire:${wire.id}`)}
@@ -1311,11 +1313,21 @@ export default function AnalyzeScreen() {
                 ))
               )}
               {schematic.wires.length > wireDisplayLimit && (
-                <Text style={styles.moreText}>
-                  {es
-                    ? `+${schematic.wires.length - wireDisplayLimit} cables más`
-                    : `+${schematic.wires.length - wireDisplayLimit} more wires`}
-                </Text>
+                <AnimatedPressable
+                  onPress={() => setWiresExpanded((v) => !v)}
+                  style={styles.moreBtn}
+                  scaleValue={0.97}
+                >
+                  <Text style={styles.moreText}>
+                    {wiresExpanded
+                      ? es
+                        ? 'Mostrar menos'
+                        : 'Show less'
+                      : es
+                      ? `+${schematic.wires.length - wireDisplayLimit} cables más — toca para ver y corregir`
+                      : `+${schematic.wires.length - wireDisplayLimit} more wires — tap to view & correct`}
+                  </Text>
+                </AnimatedPressable>
               )}
             </View>
 
@@ -1446,7 +1458,7 @@ export default function AnalyzeScreen() {
               {schematic.connections.length === 0 ? (
                 <Text style={styles.emptyCardText}>{es ? 'No se detectaron conexiones' : 'No connections detected'}</Text>
               ) : (
-                schematic.connections.slice(0, connectionDisplayLimit).map((conn) => (
+                schematic.connections.slice(0, connectionsExpanded ? schematic.connections.length : connectionDisplayLimit).map((conn) => (
                   <AnimatedPressable
                     key={conn.id}
                     onPress={() => toggleHighlight(`connection:${conn.id}`)}
@@ -1473,11 +1485,21 @@ export default function AnalyzeScreen() {
                 ))
               )}
               {schematic.connections.length > connectionDisplayLimit && (
-                <Text style={styles.moreText}>
-                  {es
-                    ? `+${schematic.connections.length - connectionDisplayLimit} conexiones más`
-                    : `+${schematic.connections.length - connectionDisplayLimit} more connections`}
-                </Text>
+                <AnimatedPressable
+                  onPress={() => setConnectionsExpanded((v) => !v)}
+                  style={styles.moreBtn}
+                  scaleValue={0.97}
+                >
+                  <Text style={styles.moreText}>
+                    {connectionsExpanded
+                      ? es
+                        ? 'Mostrar menos'
+                        : 'Show less'
+                      : es
+                      ? `+${schematic.connections.length - connectionDisplayLimit} conexiones más — toca para ver y corregir`
+                      : `+${schematic.connections.length - connectionDisplayLimit} more connections — tap to view & correct`}
+                  </Text>
+                </AnimatedPressable>
               )}
             </View>
 
@@ -2158,6 +2180,9 @@ const styles = StyleSheet.create({
     color: WT.textTertiary,
     textAlign: 'center',
     paddingTop: 4,
+  },
+  moreBtn: {
+    paddingVertical: 6,
   },
   componentRow: {
     paddingVertical: 8,

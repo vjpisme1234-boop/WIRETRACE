@@ -385,15 +385,27 @@ export default function AnalyzeScreen() {
     if (!schematic) return;
     console.log('[Analyze] Start Reading pressed', { direction, startPoint, specificStart, branchChoices });
 
+    if (startPoint === 'specific' && !specificStart.trim()) {
+      setError(
+        es
+          ? 'Elige un cable o componente específico antes de comenzar.'
+          : 'Pick a specific wire or component before starting.'
+      );
+      return;
+    }
+
     const startLabel =
       startPoint === 'beginning'
         ? 'Line 1'
         : startPoint === 'end'
         ? 'Last line'
-        : specificStart || 'Line 1';
+        : specificStart;
 
-    // If steps already generated, go directly
-    if (schematic.readingSteps.length > 0) {
+    // If steps were already generated for this exact start point, go
+    // directly — but a changed start point (e.g. picking a different
+    // specific wire) must always regenerate, or the reader would silently
+    // keep walking the old path instead of the newly chosen one.
+    if (schematic.readingSteps.length > 0 && schematic.readingStepsStartLabel === startLabel) {
       router.push({
         pathname: '/reader',
         params: { schematicId: schematic.id, direction, startLabel },
@@ -430,7 +442,13 @@ export default function AnalyzeScreen() {
         activeProfile?.verbosity
       );
 
-      const updated = { ...schematic, readingSteps: steps, pendingJunction: pendingChoice, branchChoices };
+      const updated = {
+        ...schematic,
+        readingSteps: steps,
+        pendingJunction: pendingChoice,
+        branchChoices,
+        readingStepsStartLabel: startLabel,
+      };
       await saveSchematic(updated);
       setSchematic(updated);
 

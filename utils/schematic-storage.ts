@@ -72,6 +72,8 @@ export interface SchematicAnalysis {
   pendingJunction?: JunctionChoice | null;
   /** Path choices the user has made at branch terminals: terminal -> chosen "to". */
   branchChoices?: Record<string, string>;
+  /** The start label (wire/component name, "Line 1", "Last line") that readingSteps was generated for — lets the caller tell whether cached steps still match the user's current start-point selection. */
+  readingStepsStartLabel?: string;
   /** Structural inconsistencies caught by deterministic post-validation (e.g. a connection referencing a wire/component that was never declared). Informational only — not blocking. */
   validationWarnings?: string[];
   /** True once a user has verified this scan and saved it as a trusted reference for their team. */

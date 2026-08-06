@@ -604,6 +604,36 @@ ${JSON.stringify(analysis)}`;
   return { steps: result.steps ?? [], pendingChoice: result.pendingChoice ?? null };
 }
 
+/**
+ * Generates reading steps for a user-picked subset of wires in a user-picked
+ * order (the "custom reading order" screen). The order is already fully
+ * decided by the user, so — unlike generateReadingSteps — this never stops
+ * for an unresolved branch; it just narrates exactly the wires given, in
+ * that exact sequence.
+ */
+export async function generateCustomOrderReadingSteps(
+  analysis: AnalysisResult,
+  orderedWireLabels: string[],
+  verbosity?: 'concise' | 'detailed'
+): Promise<ReadingStep[]> {
+  console.log('[OpenRouter] generateCustomOrderReadingSteps called', { count: orderedWireLabels.length, verbosity });
+
+  const userMessage = `The user has manually selected the exact wires to read aloud and the exact order to read them in. Generate exactly one reading step per wire listed below, in this exact order — do not skip any, do not add wires that aren't listed, and do not stop early for branches even if one of these wires sits at a split:
+${orderedWireLabels.map((label, i) => `${i + 1}. Wire ${label}`).join('\n')}
+
+Schematic analysis:
+${JSON.stringify(analysis)}`;
+
+  const content = await callTextWithFallback([
+    { role: 'system', content: readingStepsPrompt(verbosity) },
+    { role: 'user', content: userMessage },
+  ], 4096);
+
+  const result = parseJsonResult<ReadingStepsResult>(content, 'generateCustomOrderReadingSteps');
+  console.log('[OpenRouter] generateCustomOrderReadingSteps parsed', { stepCount: result.steps?.length });
+  return result.steps ?? [];
+}
+
 // ---------------------------------------------------------------------------
 // Symbol clarification
 // ---------------------------------------------------------------------------

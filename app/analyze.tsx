@@ -41,7 +41,7 @@ import {
 } from 'lucide-react-native';
 import { WT } from '@/constants/wiretrace';
 import { AppLanguage, isSpanish, loadAppLanguage } from '@/utils/app-language';
-import { analyzeSchematic, analyzeMultipleImages, AnalysisResult, generateReadingSteps, parseVoiceCorrection } from '@/utils/openrouter';
+import { analyzeSchematic, analyzeMultipleImages, AnalysisResult, generateCustomOrderReadingSteps, generateReadingSteps, parseVoiceCorrection } from '@/utils/openrouter';
 import {
   generateSchematicName,
   getSchematic,
@@ -148,7 +148,7 @@ function SkeletonCard() {
 }
 
 type ReadingDirection = 'forward' | 'backward';
-type StartPoint = 'beginning' | 'end' | 'specific';
+type StartPoint = 'beginning' | 'end' | 'specific' | 'custom';
 
 type EditTarget =
   | { kind: 'wire'; id: string }
@@ -199,6 +199,10 @@ export default function AnalyzeScreen() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [schematic, setSchematic] = useState<SchematicAnalysis | null>(null);
+  const schematicIdRef = useRef<string | null>(null);
+  useEffect(() => {
+    schematicIdRef.current = schematic?.id ?? null;
+  }, [schematic?.id]);
 
   const [direction, setDirection] = useState<ReadingDirection>('forward');
   const [startPoint, setStartPoint] = useState<StartPoint>('beginning');
@@ -273,6 +277,18 @@ export default function AnalyzeScreen() {
         .catch((error) => {
           console.error('[Analyze] Failed to load app language', error);
         });
+      // Pick up changes saved by sub-screens (e.g. the custom reading
+      // order picker) that mutate this schematic directly in storage.
+      const id = schematicIdRef.current;
+      if (id) {
+        getSchematic(id)
+          .then((s) => {
+            if (isMounted && s) setSchematic(s);
+          })
+          .catch((error) => {
+            console.error('[Analyze] Failed to refresh schematic on focus', error);
+          });
+      }
       return () => {
         isMounted = false;
       };
@@ -391,6 +407,66 @@ export default function AnalyzeScreen() {
           ? 'Elige un cable o componente específico antes de comenzar.'
           : 'Pick a specific wire or component before starting.'
       );
+      return;
+    }
+
+    if (startPoint === 'custom') {
+      const orderIds = schematic.customWireOrder ?? [];
+      if (orderIds.length === 0) {
+        setError(
+          es
+            ? 'Elige y ordena al menos un cable en la pantalla de orden personalizado.'
+            : 'Pick and order at least one wire in the custom order screen.'
+        );
+        return;
+      }
+      const orderedLabels = orderIds
+        .map((id) => schematic.wires.find((w) => w.id === id)?.label)
+        .filter((label): label is string => !!label);
+      const signature = `custom:${orderIds.join(',')}`;
+
+      if (schematic.readingSteps.length > 0 && schematic.readingStepsStartLabel === signature) {
+        router.push({
+          pathname: '/reader',
+          params: { schematicId: schematic.id, direction: 'forward', startLabel: orderedLabels[0] },
+        });
+        return;
+      }
+
+      setGeneratingSteps(true);
+      console.log('[Analyze] Generating custom-order reading steps', { count: orderedLabels.length });
+      try {
+        const activeProfile = await getActiveProfile();
+        const steps = await generateCustomOrderReadingSteps(
+          {
+            wires: schematic.wires,
+            components: schematic.components,
+            connections: schematic.connections,
+            unknownSymbols: schematic.unknownSymbols,
+            summary: '',
+          },
+          orderedLabels,
+          activeProfile?.verbosity
+        );
+        const updated: SchematicAnalysis = {
+          ...schematic,
+          readingSteps: steps,
+          pendingJunction: null,
+          readingStepsStartLabel: signature,
+        };
+        await saveSchematic(updated);
+        setSchematic(updated);
+        router.push({
+          pathname: '/reader',
+          params: { schematicId: updated.id, direction: 'forward', startLabel: orderedLabels[0] },
+        });
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : es ? 'No se pudieron generar los pasos' : 'Failed to generate steps';
+        console.error('[Analyze] Custom-order step generation error', e);
+        setError(msg);
+      } finally {
+        setGeneratingSteps(false);
+      }
       return;
     }
 
@@ -1582,17 +1658,19 @@ export default function AnalyzeScreen() {
 
               <Text style={styles.startLabel}>{es ? 'Punto de Inicio' : 'Start Point'}</Text>
               <View style={styles.startOptions}>
-                {(['beginning', 'end', 'specific'] as StartPoint[]).map((opt) => {
+                {(['beginning', 'end', 'specific', 'custom'] as StartPoint[]).map((opt) => {
                   const labels: Record<StartPoint, string> = es
                     ? {
                         beginning: 'Desde el Principio',
                         end: 'Desde el Final',
                         specific: 'Cable/Componente Específico',
+                        custom: 'Orden Personalizado',
                       }
                     : {
                         beginning: 'From Beginning',
                         end: 'From End',
                         specific: 'Specific Wire/Component',
+                        custom: 'Custom Order',
                       };
                   return (
                     <AnimatedPressable
@@ -1602,6 +1680,9 @@ export default function AnalyzeScreen() {
                         setStartPoint(opt);
                         setStartPointTouched(true);
                         if (opt === 'specific') setShowStartPicker(true);
+                        if (opt === 'custom' && schematic) {
+                          router.push({ pathname: '/custom-reading-order', params: { schematicId: schematic.id } });
+                        }
                       }}
                       style={[styles.startOpt, startPoint === opt && styles.startOptActive]}
                     >
@@ -1613,6 +1694,30 @@ export default function AnalyzeScreen() {
                   );
                 })}
               </View>
+
+              {startPoint === 'custom' && (
+                <View style={styles.specificPicker}>
+                  <AnimatedPressable
+                    onPress={() => {
+                      if (schematic) {
+                        router.push({ pathname: '/custom-reading-order', params: { schematicId: schematic.id } });
+                      }
+                    }}
+                    style={styles.pickerToggle}
+                  >
+                    <Search size={16} color={WT.textSecondary} />
+                    <Text style={[styles.pickerToggleText, (schematic?.customWireOrder?.length ?? 0) > 0 && { color: WT.textPrimary }]}>
+                      {(schematic?.customWireOrder?.length ?? 0) > 0
+                        ? es
+                          ? `${schematic!.customWireOrder!.length} cables seleccionados — toca para editar`
+                          : `${schematic!.customWireOrder!.length} wires selected — tap to edit`
+                        : es
+                        ? 'Toca para elegir y ordenar cables...'
+                        : 'Tap to pick & order wires...'}
+                    </Text>
+                  </AnimatedPressable>
+                </View>
+              )}
 
               {startPoint === 'specific' && (
                 <View style={styles.specificPicker}>

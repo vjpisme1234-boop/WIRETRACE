@@ -74,6 +74,8 @@ export interface SchematicAnalysis {
   branchChoices?: Record<string, string>;
   /** The start label (wire/component name, "Line 1", "Last line") that readingSteps was generated for — lets the caller tell whether cached steps still match the user's current start-point selection. */
   readingStepsStartLabel?: string;
+  /** User-picked subset and order of wire IDs for a custom reading pass — only these wires get read, in this exact order, when Start Point is set to "custom". */
+  customWireOrder?: string[];
   /** Structural inconsistencies caught by deterministic post-validation (e.g. a connection referencing a wire/component that was never declared). Informational only — not blocking. */
   validationWarnings?: string[];
   /** True once a user has verified this scan and saved it as a trusted reference for their team. */

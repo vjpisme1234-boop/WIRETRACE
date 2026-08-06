@@ -145,6 +145,13 @@ export default function RootLayout() {
                   }}
                 />
                 <Stack.Screen
+                  name="schematic-view"
+                  options={{
+                    headerShown: false,
+                    presentation: 'modal',
+                  }}
+                />
+                <Stack.Screen
                   name="custom-reading-order"
                   options={{
                     headerShown: false,

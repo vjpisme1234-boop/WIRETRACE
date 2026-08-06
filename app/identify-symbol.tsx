@@ -14,8 +14,8 @@ import { router, useLocalSearchParams } from 'expo-router';
 import { CheckCircle, X } from 'lucide-react-native';
 import { WT, SYMBOL_TYPES } from '@/constants/wiretrace';
 import { getSchematic, updateSchematic } from '@/utils/schematic-storage';
-import * as FileSystem from 'expo-file-system/legacy';
 import { getSymbolClarification, identifySymbolRegion } from '@/utils/openrouter';
+import { prepareImageForAI } from '@/utils/image-resize';
 import { AppLanguage, isSpanish, loadAppLanguage } from '@/utils/app-language';
 import PulsingLogo from '@/components/PulsingLogo';
 
@@ -101,9 +101,7 @@ export default function IdentifySymbolScreen() {
     setLoadingSuggestion(true);
     setAiSuggestion(null);
     try {
-      const base64 = await FileSystem.readAsStringAsync(params.imageUri, {
-        encoding: FileSystem.EncodingType.Base64,
-      });
+      const base64 = await prepareImageForAI(params.imageUri);
       const suggestion = await identifySymbolRegion(base64, symbolDesc);
       setAiSuggestion(suggestion);
     } catch (e) {

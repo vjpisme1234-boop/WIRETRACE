@@ -3,21 +3,31 @@ import { OPENROUTER_BASE_URL, OPENROUTER_MODEL, STORAGE_KEYS } from '@/constants
 import type { ReadingStep } from '@/utils/schematic-storage';
 import type { JunctionChoice } from '@/utils/schematic-graph';
 import { loadUIPreferences } from '@/utils/ui-preferences';
-import { FREE_SCAN_LIMIT, getRemainingFreeScans, incrementFreeScanCount } from '@/utils/free-scan-limit';
+import {
+  FREE_SCAN_LIMIT,
+  FREE_TEXT_GENERATION_LIMIT,
+  getRemainingFreeScans,
+  getRemainingFreeTextGenerations,
+  incrementFreeScanCount,
+  incrementFreeTextGenerationCount,
+} from '@/utils/free-scan-limit';
 import { validateAnalysisConsistency } from '@/utils/schematic-validation';
-import { salvagePartialAnalysis } from '@/utils/partial-json';
+import { salvagePartialAnalysis, salvagePartialReadingSteps } from '@/utils/partial-json';
 
 const OPENAI_MODEL = process.env.EXPO_PUBLIC_OPENAI_MODEL || 'gpt-4o-mini';
 const ANTHROPIC_MODEL = process.env.EXPO_PUBLIC_ANTHROPIC_MODEL || 'claude-sonnet-5';
-const GEMINI_MODEL = process.env.EXPO_PUBLIC_GEMINI_MODEL || 'gemini-3.6-flash';
+// Pro over Flash: this account is on a paid, uncapped Gemini tier, and Pro
+// trades speed for reasoning capability — the right tradeoff for OCR-heavy
+// schematic reading where misread wire/terminal labels are costly mistakes.
+const GEMINI_MODEL = process.env.EXPO_PUBLIC_GEMINI_MODEL || 'gemini-3.1-pro';
 
-// Baked-in free Gemini key so the app works immediately after install (and
-// for App Store / Play Store reviewers) with no setup. Set at build time via
+// Baked-in Gemini key so the app works immediately after install (and for
+// App Store / Play Store reviewers) with no setup. Set at build time via
 // the EXPO_PUBLIC_GEMINI_DEFAULT_KEY env var (EAS secret for production
 // builds, .env for local dev) — never hardcode a real key directly in this
-// file, it ships in the compiled bundle. Free-tier accuracy on camera/scan
-// analysis is noticeably lower than the paid providers below — see the
-// in-app disclaimer on the Camera and Settings screens.
+// file, it ships in the compiled bundle. This key is on a paid Google Cloud
+// tier (no hard cap), running the Pro model — the "free tier, lower
+// accuracy" caveat that used to apply here no longer does.
 const DEFAULT_GEMINI_KEY = (process.env.EXPO_PUBLIC_GEMINI_DEFAULT_KEY || '').trim();
 
 async function getApiKey(): Promise<string> {
@@ -270,6 +280,18 @@ async function callGeminiWithFreeScanLimit(messages: ChatMessage[], maxTokens: n
   return result;
 }
 
+async function callGeminiWithTextGenerationLimit(messages: ChatMessage[], maxTokens: number): Promise<string> {
+  const remaining = await getRemainingFreeTextGenerations();
+  if (remaining <= 0) {
+    throw new Error(
+      `You've used all ${FREE_TEXT_GENERATION_LIMIT} free AI requests on the built-in AI for this install. Add your own Anthropic, OpenRouter, or OpenAI key in Settings to keep going.`
+    );
+  }
+  const result = await callGemini(messages, maxTokens);
+  await incrementFreeTextGenerationCount();
+  return result;
+}
+
 async function callVisionWithFallback(imageUrl: string, prompt: string, systemPrompt?: string): Promise<string> {
   const uiPrefs = await loadUIPreferences();
   return runWithFallback(
@@ -319,7 +341,7 @@ async function callTextWithFallback(messages: ChatMessage[], maxTokens: number):
       if (provider === 'anthropic') return callAnthropic(messages, maxTokens);
       if (provider === 'openrouter') return callOpenRouter(messages, maxTokens);
       if (provider === 'openai') return callOpenAI(messages, maxTokens);
-      return callGemini(messages, maxTokens);
+      return callGeminiWithTextGenerationLimit(messages, maxTokens);
     },
     'No AI key configured. Add your Anthropic, OpenRouter, or OpenAI key in Settings, or check that the built-in Gemini key is configured.'
   );
@@ -444,6 +466,26 @@ function parseAnalysisWithSalvage(content: string, label: string): AnalysisResul
   }
 }
 
+// Same idea as parseAnalysisWithSalvage, for reading-steps responses. A
+// long schematic (many wires, verbose per-step detail) can push the model
+// past the token budget before it closes out the JSON — recovering
+// whatever steps parsed cleanly beats throwing the whole reading away.
+// pendingChoice is dropped on a salvage since a truncated one can't be
+// trusted; the caller's own uncovered-wire detection picks up the slack.
+function parseReadingStepsWithSalvage(content: string, label: string): ReadingStepsResult {
+  try {
+    const result = parseJsonResult<ReadingStepsResult>(content, label);
+    return { steps: result.steps ?? [], pendingChoice: result.pendingChoice ?? null };
+  } catch (e) {
+    const steps = salvagePartialReadingSteps(content);
+    if (steps.length === 0) {
+      throw e; // nothing recoverable
+    }
+    console.warn(`[OpenRouter] ${label} full parse failed — salvaged partial steps`, { stepCount: steps.length });
+    return { steps: steps as ReadingStep[], pendingChoice: null };
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Single-image schematic analysis
 // ---------------------------------------------------------------------------
@@ -557,14 +599,14 @@ ${JSON.stringify(analysis)}`;
   const content = await callTextWithFallback([
     { role: 'system', content: readingStepsPrompt(verbosity) },
     { role: 'user', content: userMessage },
-  ], 4096);
+  ], 16384);
 
-  const result = parseJsonResult<ReadingStepsResult>(content, 'generateReadingSteps');
+  const result = parseReadingStepsWithSalvage(content, 'generateReadingSteps');
   console.log('[OpenRouter] generateReadingSteps parsed', {
     stepCount: result.steps?.length,
     pendingChoice: !!result.pendingChoice,
   });
-  return { steps: result.steps ?? [], pendingChoice: result.pendingChoice ?? null };
+  return result;
 }
 
 /**
@@ -594,14 +636,14 @@ ${JSON.stringify(analysis)}`;
   const content = await callTextWithFallback([
     { role: 'system', content: readingStepsPrompt(verbosity) },
     { role: 'user', content: userMessage },
-  ], 4096);
+  ], 16384);
 
-  const result = parseJsonResult<ReadingStepsResult>(content, 'continueReadingSteps');
+  const result = parseReadingStepsWithSalvage(content, 'continueReadingSteps');
   console.log('[OpenRouter] continueReadingSteps parsed', {
     stepCount: result.steps?.length,
     pendingChoice: !!result.pendingChoice,
   });
-  return { steps: result.steps ?? [], pendingChoice: result.pendingChoice ?? null };
+  return result;
 }
 
 /**
@@ -627,11 +669,11 @@ ${JSON.stringify(analysis)}`;
   const content = await callTextWithFallback([
     { role: 'system', content: readingStepsPrompt(verbosity) },
     { role: 'user', content: userMessage },
-  ], 4096);
+  ], 16384);
 
-  const result = parseJsonResult<ReadingStepsResult>(content, 'generateCustomOrderReadingSteps');
+  const result = parseReadingStepsWithSalvage(content, 'generateCustomOrderReadingSteps');
   console.log('[OpenRouter] generateCustomOrderReadingSteps parsed', { stepCount: result.steps?.length });
-  return result.steps ?? [];
+  return result.steps;
 }
 
 // ---------------------------------------------------------------------------

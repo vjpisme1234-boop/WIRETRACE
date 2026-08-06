@@ -145,3 +145,13 @@ export function salvagePartialAnalysis(rawContent: string): SalvagedAnalysis {
     startPointAmbiguous: typeof startPointAmbiguous === 'boolean' ? startPointAmbiguous : undefined,
   };
 }
+
+/** Same rescue as salvagePartialAnalysis, for the reading-steps response
+ * shape ({ steps: [...], pendingChoice: ... }). A truncated pendingChoice
+ * object can't be trusted, so callers should treat it as absent when
+ * salvaging — only the steps array is recovered here. */
+export function salvagePartialReadingSteps(rawContent: string): unknown[] {
+  const cleaned = rawContent.replace(/```json\n?/g, '').replace(/```\n?/g, '');
+  const steps = extractField(cleaned, 'steps');
+  return Array.isArray(steps) ? steps : [];
+}

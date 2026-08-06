@@ -14,8 +14,8 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { router, useFocusEffect, useLocalSearchParams } from 'expo-router';
-import * as FileSystem from 'expo-file-system/legacy';
 import { ExpoSpeechRecognitionModule, useSpeechRecognitionEvent } from 'expo-speech-recognition';
+import { prepareImageForAI } from '@/utils/image-resize';
 import { speakText } from '@/utils/tts';
 import PulsingLogo from '@/components/PulsingLogo';
 import {
@@ -301,10 +301,8 @@ export default function AnalyzeScreen() {
     console.log('[Analyze] Starting schematic analysis', { imageUri });
 
     try {
-      console.log('[Analyze] Reading image as base64');
-      const base64 = await FileSystem.readAsStringAsync(imageUri, {
-        encoding: FileSystem.EncodingType.Base64,
-      });
+      console.log('[Analyze] Preparing image for upload');
+      const base64 = await prepareImageForAI(imageUri);
 
       console.log('[Analyze] Calling OpenRouter analyzeSchematic');
       const result: AnalysisResult = await analyzeSchematic(base64);
@@ -343,12 +341,8 @@ export default function AnalyzeScreen() {
     console.log('[Analyze] Starting multi-page analysis', { pageCount: imageUris.length });
 
     try {
-      console.log('[Analyze] Reading all images as base64');
-      const base64Images = await Promise.all(
-        imageUris.map((uri) =>
-          FileSystem.readAsStringAsync(uri, { encoding: FileSystem.EncodingType.Base64 })
-        )
-      );
+      console.log('[Analyze] Preparing images for upload');
+      const base64Images = await Promise.all(imageUris.map((uri) => prepareImageForAI(uri)));
 
       console.log('[Analyze] Calling OpenRouter analyzeMultipleImages');
       const result: AnalysisResult = await analyzeMultipleImages(base64Images);

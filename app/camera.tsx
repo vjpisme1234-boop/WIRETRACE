@@ -378,8 +378,8 @@ export default function CameraScreen() {
         </Text>
         <Text style={styles.accuracyHint}>
           {es
-            ? 'La AI gratuita integrada puede tener menor precisión — agrega una clave paga en Ajustes para mejores resultados.'
-            : 'The free built-in AI may be less accurate — add a paid key in Settings for best results.'}
+            ? 'Para mejores resultados, alinea el esquema y evita reflejos.'
+            : 'For best results, align the schematic and avoid glare.'}
         </Text>
       </View>
 

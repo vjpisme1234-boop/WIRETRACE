@@ -394,8 +394,8 @@ export default function SettingsScreen() {
           <Zap size={18} color={WT.green} fill={WT.green} />
           <Text style={styles.freeAiBannerText}>
             {es
-              ? 'WireTrace AI funciona de inmediato con una AI gratuita integrada (Google Gemini). La precisión al escanear esquemas es notablemente mejor con una clave paga (Claude recomendado) — agrega una abajo para los mejores resultados.'
-              : 'WireTrace AI works out of the box with a free built-in AI (Google Gemini). Scanning accuracy is noticeably better with a paid key (Claude recommended) — add one below for the best results.'}
+              ? 'WireTrace AI funciona de inmediato con una AI integrada (Google Gemini) — no requiere configuración. También puedes agregar tu propia clave de Claude, OpenRouter u OpenAI abajo si lo prefieres.'
+              : "WireTrace AI works out of the box with a built-in AI (Google Gemini) — no setup required. You can also add your own Claude, OpenRouter, or OpenAI key below if you'd rather use one of those."}
           </Text>
         </View>
 

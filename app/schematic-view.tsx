@@ -2,7 +2,8 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Animated, PanResponder, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { router, useFocusEffect, useLocalSearchParams } from 'expo-router';
-import { ArrowLeft, RotateCcw, StickyNote } from 'lucide-react-native';
+import { Gesture, GestureDetector } from 'react-native-gesture-handler';
+import { ArrowLeft, RotateCcw, StickyNote, ZoomIn, ZoomOut } from 'lucide-react-native';
 import Svg, { Path, Rect, Text as SvgText } from 'react-native-svg';
 import { WT } from '@/constants/wiretrace';
 import { AppLanguage, isSpanish, loadAppLanguage } from '@/utils/app-language';
@@ -210,6 +211,9 @@ function clamp(value: number, min: number, max: number): number {
   return Math.min(Math.max(value, min), Math.max(min, max));
 }
 
+const MIN_SCALE = 0.5;
+const MAX_SCALE = 3;
+
 // Shrinks a center-to-center line so it visually terminates near each
 // node's border instead of running through the label text. Node positions
 // are looked up live so dragging a node keeps its wires attached.
@@ -305,12 +309,14 @@ function DraggableNode({
   node,
   pos,
   bounds,
+  scaleRef,
   onMove,
   onRelease,
 }: {
   node: DiagramNode;
   pos: Pos;
   bounds: { width: number; height: number };
+  scaleRef: React.MutableRefObject<number>;
   onMove: (p: Pos) => void;
   onRelease: () => void;
 }) {
@@ -332,9 +338,13 @@ function DraggableNode({
         startRef.current = posRef.current;
       },
       onPanResponderMove: (_, g) => {
+        // Drag deltas arrive in screen pixels, but positions live in
+        // unscaled canvas space — divide out the current zoom so the node
+        // tracks the finger correctly at any zoom level.
+        const s = scaleRef.current || 1;
         const b = boundsRef.current;
-        const nx = clamp(startRef.current.x + g.dx, 0, b.width - NODE_W);
-        const ny = clamp(startRef.current.y + g.dy, 0, b.height - NODE_H);
+        const nx = clamp(startRef.current.x + g.dx / s, 0, b.width - NODE_W);
+        const ny = clamp(startRef.current.y + g.dy / s, 0, b.height - NODE_H);
         onMoveRef.current({ x: nx, y: ny });
       },
       onPanResponderRelease: () => onReleaseRef.current(),
@@ -363,6 +373,7 @@ function DraggableNote({
   note,
   pos,
   bounds,
+  scaleRef,
   onMove,
   onRelease,
   onTap,
@@ -370,6 +381,7 @@ function DraggableNote({
   note: NoteAnnotation;
   pos: Pos;
   bounds: { width: number; height: number };
+  scaleRef: React.MutableRefObject<number>;
   onMove: (p: Pos) => void;
   onRelease: () => void;
   onTap: () => void;
@@ -396,9 +408,10 @@ function DraggableNote({
       },
       onPanResponderMove: (_, g) => {
         if (Math.abs(g.dx) > 3 || Math.abs(g.dy) > 3) movedRef.current = true;
+        const s = scaleRef.current || 1;
         const b = boundsRef.current;
-        const nx = clamp(startRef.current.x + g.dx, 0, b.width - NOTE_W);
-        const ny = clamp(startRef.current.y + g.dy, 0, b.height - NOTE_H);
+        const nx = clamp(startRef.current.x + g.dx / s, 0, b.width - NOTE_W);
+        const ny = clamp(startRef.current.y + g.dy / s, 0, b.height - NOTE_H);
         onMoveRef.current({ x: nx, y: ny });
       },
       onPanResponderRelease: () => {
@@ -434,6 +447,45 @@ export default function SchematicViewScreen() {
   const [notePositions, setNotePositions] = useState<Record<string, Pos>>({});
   const positionsRef = useRef<Record<string, Pos>>({});
   const notePositionsRef = useRef<Record<string, Pos>>({});
+
+  // Zoom: scaleAnim drives the live visual transform (updated continuously
+  // during a pinch), scaleRef mirrors it for synchronous reads inside plain
+  // PanResponder callbacks (node/note dragging), and committedScale resizes
+  // the actual scrollable canvas — only on gesture end / button press, so a
+  // mid-pinch canvas doesn't keep resizing the ScrollView underneath the
+  // fingers.
+  const scaleAnim = useRef(new Animated.Value(1)).current;
+  const scaleRef = useRef(1);
+  const baseScaleRef = useRef(1);
+  const [committedScale, setCommittedScale] = useState(1);
+  const [displayScale, setDisplayScale] = useState(1);
+
+  const applyScale = (next: number, animate: boolean) => {
+    const clamped = clamp(next, MIN_SCALE, MAX_SCALE);
+    scaleRef.current = clamped;
+    setDisplayScale(clamped);
+    setCommittedScale(clamped);
+    if (animate) {
+      Animated.timing(scaleAnim, { toValue: clamped, duration: 180, useNativeDriver: true }).start();
+    } else {
+      scaleAnim.setValue(clamped);
+    }
+  };
+
+  const pinchGesture = Gesture.Pinch()
+    .runOnJS(true)
+    .onStart(() => {
+      baseScaleRef.current = scaleRef.current;
+    })
+    .onUpdate((e) => {
+      const next = clamp(baseScaleRef.current * e.scale, MIN_SCALE, MAX_SCALE);
+      scaleRef.current = next;
+      scaleAnim.setValue(next);
+      setDisplayScale(next);
+    })
+    .onEnd(() => {
+      setCommittedScale(scaleRef.current);
+    });
 
   useFocusEffect(
     React.useCallback(() => {
@@ -562,65 +614,91 @@ export default function SchematicViewScreen() {
           )}
           <Text style={styles.subtitle}>
             {es
-              ? `${schematic.wires.length} cables · ${schematic.components.length} componentes · arrastra para reorganizar`
-              : `${schematic.wires.length} wires · ${schematic.components.length} components · drag to rearrange`}
+              ? `${schematic.wires.length} cables · ${schematic.components.length} componentes · arrastra para reorganizar · pellizca o usa +/− para acercar`
+              : `${schematic.wires.length} wires · ${schematic.components.length} components · drag to rearrange · pinch or use +/− to zoom in on wires`}
           </Text>
-          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ padding: 12 }}>
-            <ScrollView showsVerticalScrollIndicator={false}>
-              <View style={{ width: canvasWidth, height: canvasHeight }}>
-                <Svg width={canvasWidth} height={canvasHeight} style={StyleSheet.absoluteFill}>
-                  {diagram.edges.map((edge) => (
-                    <FlowEdge key={edge.id} edge={edge} positions={positions} />
-                  ))}
-                  {diagram.edges.map((edge) => {
-                    const { d } = edgePath(edge, positions);
-                    const mid = d.match(/Q ([\d.-]+) ([\d.-]+)/);
-                    const lx = mid ? parseFloat(mid[1]) : 0;
-                    const ly = mid ? parseFloat(mid[2]) : 0;
-                    return (
-                      <React.Fragment key={`label-${edge.id}`}>
-                        <Rect x={lx - 16} y={ly - 10} width={32} height={18} rx={4} fill={WT.bg} opacity={0.85} />
-                        <SvgText x={lx} y={ly + 3} fontSize={11} fontWeight="700" fill={edge.color} textAnchor="middle">
-                          {edge.wireLabel}
-                        </SvgText>
-                      </React.Fragment>
-                    );
-                  })}
-                </Svg>
+          <GestureDetector gesture={pinchGesture}>
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ padding: 12 }}>
+              <ScrollView showsVerticalScrollIndicator={false}>
+                <View style={{ width: canvasWidth * committedScale, height: canvasHeight * committedScale }}>
+                  <Animated.View
+                    style={{
+                      width: canvasWidth,
+                      height: canvasHeight,
+                      transform: [{ scale: scaleAnim }],
+                      transformOrigin: 'top left',
+                    }}
+                  >
+                    <Svg width={canvasWidth} height={canvasHeight} style={StyleSheet.absoluteFill}>
+                      {diagram.edges.map((edge) => (
+                        <FlowEdge key={edge.id} edge={edge} positions={positions} />
+                      ))}
+                      {diagram.edges.map((edge) => {
+                        const { d } = edgePath(edge, positions);
+                        const mid = d.match(/Q ([\d.-]+) ([\d.-]+)/);
+                        const lx = mid ? parseFloat(mid[1]) : 0;
+                        const ly = mid ? parseFloat(mid[2]) : 0;
+                        return (
+                          <React.Fragment key={`label-${edge.id}`}>
+                            <Rect x={lx - 16} y={ly - 10} width={32} height={18} rx={4} fill={WT.bg} opacity={0.85} />
+                            <SvgText x={lx} y={ly + 3} fontSize={11} fontWeight="700" fill={edge.color} textAnchor="middle">
+                              {edge.wireLabel}
+                            </SvgText>
+                          </React.Fragment>
+                        );
+                      })}
+                    </Svg>
 
-                {diagram.nodes.map((node) => {
-                  const pos = positions[node.key];
-                  if (!pos) return null;
-                  return (
-                    <DraggableNode
-                      key={node.key}
-                      node={node}
-                      pos={pos}
-                      bounds={{ width: canvasWidth, height: canvasHeight }}
-                      onMove={(p) => updateNodePosition(node.key, p)}
-                      onRelease={persistPositions}
-                    />
-                  );
-                })}
+                    {diagram.nodes.map((node) => {
+                      const pos = positions[node.key];
+                      if (!pos) return null;
+                      return (
+                        <DraggableNode
+                          key={node.key}
+                          node={node}
+                          pos={pos}
+                          bounds={{ width: canvasWidth, height: canvasHeight }}
+                          scaleRef={scaleRef}
+                          onMove={(p) => updateNodePosition(node.key, p)}
+                          onRelease={persistPositions}
+                        />
+                      );
+                    })}
 
-                {notes.map((note) => {
-                  const pos = notePositions[note.id];
-                  if (!pos) return null;
-                  return (
-                    <DraggableNote
-                      key={note.id}
-                      note={note}
-                      pos={pos}
-                      bounds={{ width: canvasWidth, height: canvasHeight }}
-                      onMove={(p) => updateNotePosition(note.id, p)}
-                      onRelease={persistPositions}
-                      onTap={() => speakText(note.text)}
-                    />
-                  );
-                })}
-              </View>
+                    {notes.map((note) => {
+                      const pos = notePositions[note.id];
+                      if (!pos) return null;
+                      return (
+                        <DraggableNote
+                          key={note.id}
+                          note={note}
+                          pos={pos}
+                          bounds={{ width: canvasWidth, height: canvasHeight }}
+                          scaleRef={scaleRef}
+                          onMove={(p) => updateNotePosition(note.id, p)}
+                          onRelease={persistPositions}
+                          onTap={() => speakText(note.text)}
+                        />
+                      );
+                    })}
+                  </Animated.View>
+                </View>
+              </ScrollView>
             </ScrollView>
-          </ScrollView>
+          </GestureDetector>
+
+          <View style={[styles.zoomControls, { bottom: insets.bottom + 16 }]}>
+            <Pressable onPress={() => applyScale(scaleRef.current * 1.25, true)} style={styles.zoomBtn} hitSlop={6}>
+              <ZoomIn size={18} color={WT.textPrimary} />
+            </Pressable>
+            <Text style={styles.zoomPercent}>{Math.round(displayScale * 100)}%</Text>
+            <Pressable onPress={() => applyScale(scaleRef.current / 1.25, true)} style={styles.zoomBtn} hitSlop={6}>
+              <ZoomOut size={18} color={WT.textPrimary} />
+            </Pressable>
+            <Pressable onPress={() => applyScale(1, true)} style={styles.zoomResetBtn} hitSlop={6}>
+              <Text style={styles.zoomResetText}>{es ? 'Restablecer' : 'Reset'}</Text>
+            </Pressable>
+          </View>
         </>
       )}
     </View>
@@ -720,5 +798,49 @@ const styles = StyleSheet.create({
     color: WT.bg,
     fontWeight: '600',
     flex: 1,
+  },
+  zoomControls: {
+    position: 'absolute',
+    right: 16,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    backgroundColor: WT.bgCard,
+    borderRadius: 24,
+    paddingHorizontal: 8,
+    paddingVertical: 6,
+    borderWidth: 1,
+    borderColor: WT.border,
+    shadowColor: '#000',
+    shadowOpacity: 0.3,
+    shadowRadius: 6,
+    shadowOffset: { width: 0, height: 3 },
+    elevation: 5,
+  },
+  zoomBtn: {
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  zoomPercent: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: WT.textSecondary,
+    minWidth: 38,
+    textAlign: 'center',
+  },
+  zoomResetBtn: {
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    borderRadius: 14,
+    marginLeft: 2,
+    backgroundColor: WT.blueMuted,
+  },
+  zoomResetText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: WT.blue,
   },
 });

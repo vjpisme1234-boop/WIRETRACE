@@ -1,4 +1,4 @@
-import React, { useEffect, useRef } from 'react';
+import { useEffect, useRef } from 'react';
 import { Animated, Image, StyleSheet } from 'react-native';
 import { WT } from '@/constants/wiretrace';
 

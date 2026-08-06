@@ -52,7 +52,7 @@ import {
   Connection,
   UnknownSymbol,
 } from '@/utils/schematic-storage';
-import { findJunctions, JunctionChoice, matchJunctionAnswer } from '@/utils/schematic-graph';
+import { findJunctions, matchJunctionAnswer } from '@/utils/schematic-graph';
 import { getActiveProfile } from '@/utils/teaching-profiles';
 import { DEFAULT_UI_PREFERENCES, loadUIPreferences } from '@/utils/ui-preferences';
 

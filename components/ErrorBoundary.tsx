@@ -28,22 +28,6 @@ interface State {
   language: "english" | "spanish";
 }
 
-/** Extract a readable source location from a stack trace */
-function extractSource(stack: string): string | null {
-  if (!stack) return null;
-  for (const line of stack.split("\n")) {
-    const cleanMatch = line.match(/at .+\/((app|components|screens|hooks)\/[^:?)]+):(\d+)/);
-    if (cleanMatch) return `${cleanMatch[1]}:${cleanMatch[3]}`;
-
-    const fileMatch = line.match(/at .+\/([^/\s:?)]+\.[jt]sx?):(\d+)/);
-    if (fileMatch && !fileMatch[1].includes('.bundle')) return `${fileMatch[1]}:${fileMatch[2]}`;
-
-    const bundleMatch = line.match(/\/([^/]+)\.bundle[^:]*:(\d+):(\d+)/);
-    if (bundleMatch) return `${bundleMatch[1]}:${bundleMatch[2]}`;
-  }
-  return null;
-}
-
 interface ComponentFrame {
   name: string;
   source: string | null;

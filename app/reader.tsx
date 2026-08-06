@@ -665,7 +665,7 @@ export default function ReaderScreen() {
           : 'Listening timed out. Tap mic or say command again.'
       );
     }
-  }, [speechLanguage, voiceNextEnabled]);
+  });
 
   // Ask by voice for a starting point once the schematic is ready
   useEffect(() => {

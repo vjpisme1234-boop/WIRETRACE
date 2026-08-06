@@ -19,7 +19,10 @@ const ANTHROPIC_MODEL = process.env.EXPO_PUBLIC_ANTHROPIC_MODEL || 'claude-sonne
 // Pro over Flash: this account is on a paid, uncapped Gemini tier, and Pro
 // trades speed for reasoning capability — the right tradeoff for OCR-heavy
 // schematic reading where misread wire/terminal labels are costly mistakes.
-const GEMINI_MODEL = process.env.EXPO_PUBLIC_GEMINI_MODEL || 'gemini-3.1-pro';
+// Using the stable "gemini-2.5-pro" (not a "-preview" model) deliberately —
+// preview models can need separate allowlisting even on a paid account and
+// get deprecated on short notice, neither of which a closed test can afford.
+const GEMINI_MODEL = process.env.EXPO_PUBLIC_GEMINI_MODEL || 'gemini-2.5-pro';
 
 // Baked-in Gemini key so the app works immediately after install (and for
 // App Store / Play Store reviewers) with no setup. Set at build time via

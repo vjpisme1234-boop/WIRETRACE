@@ -138,9 +138,23 @@ export default function HomeScreen() {
   const [language, setLanguage] = useState<AppLanguage>('english');
   const [uploading, setUploading] = useState(false);
   const [showUploadTip, setShowUploadTip] = useState(false);
+  const [now, setNow] = useState(new Date());
   const scanScale = useRef(new Animated.Value(1)).current;
   const logoPulse = useRef(new Animated.Value(0)).current;
   const rasterizerRef = useRef<SchematicRasterizerHandle>(null);
+
+  // Live clock — ticks every second, aligned to the actual second boundary
+  // so it doesn't visibly drift out of sync with a wall clock over time.
+  useEffect(() => {
+    let timeout: ReturnType<typeof setTimeout>;
+    const tick = () => {
+      setNow(new Date());
+      const msToNextSecond = 1000 - (Date.now() % 1000);
+      timeout = setTimeout(tick, msToNextSecond);
+    };
+    tick();
+    return () => clearTimeout(timeout);
+  }, []);
 
   useFocusEffect(
     useCallback(() => {
@@ -232,6 +246,9 @@ export default function HomeScreen() {
   const topPad = insets.top + 16;
   const es = isSpanish(language);
 
+  const clockTime = now.toLocaleTimeString(es ? 'es-ES' : 'en-US', { hour: 'numeric', minute: '2-digit' });
+  const clockDate = now.toLocaleDateString(es ? 'es-ES' : 'en-US', { weekday: 'short', month: 'short', day: 'numeric' });
+
   return (
     <View style={styles.root}>
       <CircuitBackground />
@@ -247,6 +264,10 @@ export default function HomeScreen() {
               <Image source={require('@/assets/images/icon.png')} style={styles.logoImage} />
             </View>
             <Text style={styles.headerTitle}>WireTrace AI</Text>
+          </View>
+          <View style={styles.clockBadge}>
+            <Text style={styles.clockTime}>{clockTime}</Text>
+            <Text style={styles.clockDate}>{clockDate}</Text>
           </View>
           <AnimatedPressable onPress={handleSettings} style={styles.settingsBtn} scaleValue={0.9}>
             <Settings size={22} color={WT.textSecondary} />
@@ -424,6 +445,21 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     color: WT.textPrimary,
     letterSpacing: -0.3,
+  },
+  clockBadge: {
+    alignItems: 'center',
+  },
+  clockTime: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: WT.textPrimary,
+    fontVariant: ['tabular-nums'],
+    letterSpacing: -0.2,
+  },
+  clockDate: {
+    fontSize: 11,
+    color: WT.textTertiary,
+    marginTop: 1,
   },
   settingsBtn: {
     width: 44,

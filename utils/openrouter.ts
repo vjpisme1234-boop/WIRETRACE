@@ -16,14 +16,15 @@ import { salvagePartialAnalysis, salvagePartialReadingSteps } from '@/utils/part
 
 const OPENAI_MODEL = process.env.EXPO_PUBLIC_OPENAI_MODEL || 'gpt-4o-mini';
 const ANTHROPIC_MODEL = process.env.EXPO_PUBLIC_ANTHROPIC_MODEL || 'claude-sonnet-5';
-// Reverted the Pro-tier experiment: gemini-2.5-pro is blocked for new GCP
-// customers ahead of its official retirement (a known Google-side issue,
-// not a bug here), and its replacement, gemini-3.1-pro, is a preview model
-// that can need separate allowlisting even on a paid account — the same
-// class of risk. gemini-3.6-flash is the model this app already had
-// working for this account before either of those attempts; stop chasing
-// "Pro" access issues and stay on the proven-working baseline.
-const GEMINI_MODEL = process.env.EXPO_PUBLIC_GEMINI_MODEL || 'gemini-3.6-flash';
+// The entire Gemini 2.5 family (gemini-2.5-pro AND gemini-2.5-flash) is
+// blocked for this account's key with "no longer available to new users" —
+// confirmed by calling the API directly, not assumed. gemini-3.1-pro is
+// NOT a valid model ID on its own (that was an earlier bad guess here) —
+// the real ID is gemini-3.1-pro-preview, which IS confirmed working for
+// this key despite being a preview model. Being a preview does still carry
+// some risk of being renamed/replaced later, but it's the verified-working
+// Pro-tier option right now.
+const GEMINI_MODEL = process.env.EXPO_PUBLIC_GEMINI_MODEL || 'gemini-3.1-pro-preview';
 
 // Baked-in Gemini key so the app works immediately after install (and for
 // App Store / Play Store reviewers) with no setup. Set at build time via
@@ -31,8 +32,7 @@ const GEMINI_MODEL = process.env.EXPO_PUBLIC_GEMINI_MODEL || 'gemini-3.6-flash';
 // builds, .env for local dev) — never hardcode a real key directly in this
 // file, it ships in the compiled bundle. This key is on a paid Google Cloud
 // tier (no hard cap) — the "free tier, lower accuracy" caveat that used to
-// apply here no longer does, even though the model is still Flash (see
-// GEMINI_MODEL above for why Pro isn't currently usable on this account).
+// apply here no longer does.
 const DEFAULT_GEMINI_KEY = (process.env.EXPO_PUBLIC_GEMINI_DEFAULT_KEY || '').trim();
 
 async function getApiKey(): Promise<string> {

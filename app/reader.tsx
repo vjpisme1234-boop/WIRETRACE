@@ -25,7 +25,6 @@ import { getUncoveredWires, JunctionChoice, JunctionOption, matchJunctionAnswer 
 import { loadTTSSettings, speakText, stopSpeech } from '@/utils/tts';
 import { DEFAULT_UI_PREFERENCES, loadUIPreferences } from '@/utils/ui-preferences';
 import PulsingLogo from '@/components/PulsingLogo';
-import { getActiveProfile } from '@/utils/teaching-profiles';
 
 const WIRE_COLOR_MAP: Record<string, string> = {
   red: '#FF3B30',
@@ -268,7 +267,6 @@ export default function ReaderScreen() {
     console.log('[Reader] Resolving deferred start point', { label });
     try {
       const dir: 'forward' | 'backward' = params.direction === 'backward' ? 'backward' : 'forward';
-      const activeProfile = await getActiveProfile();
       const { steps: newSteps, pendingChoice } = await generateReadingSteps(
         {
           wires: schematicForHelp.wires,
@@ -279,8 +277,7 @@ export default function ReaderScreen() {
         },
         dir,
         label,
-        schematicForHelp.branchChoices,
-        activeProfile?.verbosity
+        schematicForHelp.branchChoices
       );
 
       const updated: SchematicAnalysis = {
@@ -337,7 +334,6 @@ export default function ReaderScreen() {
     try {
       const dir: 'forward' | 'backward' = params.direction === 'backward' ? 'backward' : 'forward';
       const priorGenerationOrderSteps = schematicForHelp.readingSteps;
-      const activeProfile = await getActiveProfile();
 
       const { steps: newSteps, pendingChoice } = await continueReadingSteps(
         {
@@ -350,8 +346,7 @@ export default function ReaderScreen() {
         dir,
         priorGenerationOrderSteps,
         pendingJunction.terminal,
-        option.to,
-        activeProfile?.verbosity
+        option.to
       );
 
       const updatedBranchChoices = { ...(schematicForHelp.branchChoices || {}), [pendingJunction.terminal]: option.to };
@@ -429,7 +424,6 @@ export default function ReaderScreen() {
     try {
       const dir: 'forward' | 'backward' = params.direction === 'backward' ? 'backward' : 'forward';
       const priorGenerationOrderSteps = schematicForHelp.readingSteps;
-      const activeProfile = await getActiveProfile();
       const { steps: newSteps, pendingChoice } = await generateReadingSteps(
         {
           wires: schematicForHelp.wires,
@@ -440,8 +434,7 @@ export default function ReaderScreen() {
         },
         dir,
         nextLabel,
-        schematicForHelp.branchChoices,
-        activeProfile?.verbosity
+        schematicForHelp.branchChoices
       );
 
       const updatedGenerationOrderSteps = [...priorGenerationOrderSteps, ...newSteps];

@@ -53,7 +53,6 @@ import {
   UnknownSymbol,
 } from '@/utils/schematic-storage';
 import { findJunctions, matchJunctionAnswer } from '@/utils/schematic-graph';
-import { getActiveProfile } from '@/utils/teaching-profiles';
 import { DEFAULT_UI_PREFERENCES, loadUIPreferences } from '@/utils/ui-preferences';
 
 function targetMatches(target: { kind: string; id?: string } | null, kind: string, id: string): boolean {
@@ -430,7 +429,6 @@ export default function AnalyzeScreen() {
       setGeneratingSteps(true);
       console.log('[Analyze] Generating custom-order reading steps', { count: orderedLabels.length });
       try {
-        const activeProfile = await getActiveProfile();
         const steps = await generateCustomOrderReadingSteps(
           {
             wires: schematic.wires,
@@ -439,8 +437,7 @@ export default function AnalyzeScreen() {
             unknownSymbols: schematic.unknownSymbols,
             summary: '',
           },
-          orderedLabels,
-          activeProfile?.verbosity
+          orderedLabels
         );
         const updated: SchematicAnalysis = {
           ...schematic,
@@ -497,7 +494,6 @@ export default function AnalyzeScreen() {
     setGeneratingSteps(true);
     console.log('[Analyze] Generating reading steps via OpenRouter');
     try {
-      const activeProfile = await getActiveProfile();
       const { steps, pendingChoice } = await generateReadingSteps(
         {
           wires: schematic.wires,
@@ -508,8 +504,7 @@ export default function AnalyzeScreen() {
         },
         direction,
         startLabel,
-        branchChoices,
-        activeProfile?.verbosity
+        branchChoices
       );
 
       const updated = {

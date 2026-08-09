@@ -4,7 +4,7 @@ import { LinearGradient } from 'expo-linear-gradient';
 import Svg, { Circle, Defs, Line, Path, Pattern, Rect } from 'react-native-svg';
 
 const TILE = 96;
-const PULSE_LENGTH = 70;
+const PULSE_LENGTH = 110;
 
 const AnimatedPath = Animated.createAnimatedComponent(Path);
 
@@ -23,12 +23,20 @@ function buildFlowTraces(width: number, height: number): FlowTrace[] {
     const bendY = Math.round(height * (r + (i % 2 === 0 ? 0.09 : -0.09)));
     const d = `M -20 ${y} H ${bendX} V ${bendY} H ${width + 20}`;
     const length = Math.abs(bendX + 20) + Math.abs(bendY - y) + Math.abs(width + 20 - bendX);
-    return { d, length, duration: 3400 + i * 550, delay: i * 550 };
+    return { d, length, duration: 2900 + i * 500, delay: i * 500 };
   });
 }
 
-function FlowLine({ trace }: { trace: FlowTrace }) {
+// Matches the logo's two-tone cyan/pink neon look — traces alternate
+// between the two so the background echoes the pulsing logo glow.
+const FLOW_COLORS = {
+  blue: { outer: '#00B4FF', inner: '#7BE8FF', faint: 'rgba(0,180,255,0.1)' },
+  pink: { outer: '#FF12D6', inner: '#FFA3FF', faint: 'rgba(255,18,214,0.14)' },
+};
+
+function FlowLine({ trace, colors }: { trace: FlowTrace; colors: { outer: string; inner: string } }) {
   const progress = useRef(new Animated.Value(0)).current;
+  const pulse = useRef(new Animated.Value(0)).current;
 
   useEffect(() => {
     let stopped = false;
@@ -53,27 +61,43 @@ function FlowLine({ trace }: { trace: FlowTrace }) {
     };
   }, [progress, trace.delay, trace.duration]);
 
+  // Independent breathing glow layered on top of the travelling comet, so
+  // the line visibly pulsates in place rather than just sweeping across.
+  useEffect(() => {
+    const glow = Animated.loop(
+      Animated.sequence([
+        Animated.timing(pulse, { toValue: 1, duration: 1400, useNativeDriver: false }),
+        Animated.timing(pulse, { toValue: 0, duration: 1400, useNativeDriver: false }),
+      ])
+    );
+    glow.start();
+    return () => glow.stop();
+  }, [pulse]);
+
   const dashOffset = progress.interpolate({
     inputRange: [0, 1],
     outputRange: [trace.length + PULSE_LENGTH, -PULSE_LENGTH],
   });
 
+  const glowOpacity = pulse.interpolate({ inputRange: [0, 1], outputRange: [0.28, 0.6] });
+  const glowWidth = pulse.interpolate({ inputRange: [0, 1], outputRange: [5, 9] });
+
   return (
     <>
       <AnimatedPath
         d={trace.d}
-        stroke="#00B4FF"
-        strokeWidth={5}
+        stroke={colors.outer}
+        strokeWidth={glowWidth}
         fill="none"
         strokeLinecap="round"
-        opacity={0.18}
+        opacity={glowOpacity}
         strokeDasharray={[PULSE_LENGTH, trace.length + PULSE_LENGTH]}
         strokeDashoffset={dashOffset}
       />
       <AnimatedPath
         d={trace.d}
-        stroke="#7BE8FF"
-        strokeWidth={2}
+        stroke={colors.inner}
+        strokeWidth={2.5}
         fill="none"
         strokeLinecap="round"
         strokeDasharray={[PULSE_LENGTH, trace.length + PULSE_LENGTH]}
@@ -110,12 +134,15 @@ export default function CircuitBackground() {
         </Defs>
         <Rect x={0} y={0} width={width} height={height} fill="url(#circuit)" />
 
-        {flowTraces.map((trace, i) => (
-          <React.Fragment key={i}>
-            <Path d={trace.d} stroke="rgba(0,180,255,0.1)" strokeWidth={1.5} fill="none" />
-            <FlowLine trace={trace} />
-          </React.Fragment>
-        ))}
+        {flowTraces.map((trace, i) => {
+          const colors = i % 2 === 0 ? FLOW_COLORS.blue : FLOW_COLORS.pink;
+          return (
+            <React.Fragment key={i}>
+              <Path d={trace.d} stroke={colors.faint} strokeWidth={1.5} fill="none" />
+              <FlowLine trace={trace} colors={colors} />
+            </React.Fragment>
+          );
+        })}
       </Svg>
     </View>
   );

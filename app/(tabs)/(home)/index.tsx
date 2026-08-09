@@ -180,16 +180,16 @@ export default function HomeScreen() {
   useEffect(() => {
     const glow = Animated.loop(
       Animated.sequence([
-        Animated.timing(logoPulse, { toValue: 1, duration: 900, useNativeDriver: true }),
-        Animated.timing(logoPulse, { toValue: 0, duration: 900, useNativeDriver: true }),
+        Animated.timing(logoPulse, { toValue: 1, duration: 1200, useNativeDriver: true }),
+        Animated.timing(logoPulse, { toValue: 0, duration: 1200, useNativeDriver: true }),
       ])
     );
     glow.start();
     return () => glow.stop();
   }, [logoPulse]);
 
-  const logoGlowScale = logoPulse.interpolate({ inputRange: [0, 1], outputRange: [0.85, 1.3] });
-  const logoGlowOpacity = logoPulse.interpolate({ inputRange: [0, 1], outputRange: [0.25, 0.7] });
+  const logoGlowScale = logoPulse.interpolate({ inputRange: [0, 1], outputRange: [0.8, 1.5] });
+  const logoGlowOpacity = logoPulse.interpolate({ inputRange: [0, 1], outputRange: [0.2, 0.85] });
 
   const handleScan = () => {
     console.log('[Home] Tapped Scan Schematic button');

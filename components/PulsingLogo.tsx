@@ -13,16 +13,16 @@ export default function PulsingLogo({ size = 22 }: PulsingLogoProps) {
   useEffect(() => {
     const glow = Animated.loop(
       Animated.sequence([
-        Animated.timing(pulse, { toValue: 1, duration: 900, useNativeDriver: true }),
-        Animated.timing(pulse, { toValue: 0, duration: 900, useNativeDriver: true }),
+        Animated.timing(pulse, { toValue: 1, duration: 1200, useNativeDriver: true }),
+        Animated.timing(pulse, { toValue: 0, duration: 1200, useNativeDriver: true }),
       ])
     );
     glow.start();
     return () => glow.stop();
   }, [pulse]);
 
-  const glowScale = pulse.interpolate({ inputRange: [0, 1], outputRange: [0.85, 1.3] });
-  const glowOpacity = pulse.interpolate({ inputRange: [0, 1], outputRange: [0.25, 0.7] });
+  const glowScale = pulse.interpolate({ inputRange: [0, 1], outputRange: [0.8, 1.5] });
+  const glowOpacity = pulse.interpolate({ inputRange: [0, 1], outputRange: [0.2, 0.85] });
   const imageSize = Math.round(size * 0.87);
 
   return (

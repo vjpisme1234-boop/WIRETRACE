@@ -1312,8 +1312,8 @@ export default function AnalyzeScreen() {
               <Highlighter size={15} color={WT.yellow} />
               <Text style={styles.highlightHintText}>
                 {es
-                  ? 'Mantén presionada una fila para decir una corrección en voz alta, o usa el lápiz ✎ para escribirla.'
-                  : 'Long-press a row to say a correction out loud for the AI to fix, or use the pencil ✎ to type it.'}
+                  ? 'Toca una fila para resaltarla y luego mantenla presionada para decir una corrección en voz alta, o usa el lápiz ✎ para escribirla.'
+                  : 'Tap a row to highlight and then press and hold down to speak a correction or use pencil to type it in.'}
               </Text>
             </View>
 
@@ -2177,6 +2177,9 @@ const styles = StyleSheet.create({
     flex: 1,
     fontSize: 12,
     color: WT.yellow,
+    textShadowColor: '#000000',
+    textShadowOffset: { width: 0, height: 0 },
+    textShadowRadius: 3,
   },
   highlightedRow: {
     backgroundColor: WT.blueMuted,

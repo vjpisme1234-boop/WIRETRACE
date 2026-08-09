@@ -7,7 +7,7 @@ import { ArrowLeft, RotateCcw, StickyNote, ZoomIn, ZoomOut } from 'lucide-react-
 import Svg, { Path, Rect, Text as SvgText } from 'react-native-svg';
 import { WT } from '@/constants/wiretrace';
 import { AppLanguage, isSpanish, loadAppLanguage } from '@/utils/app-language';
-import { Connection, getSchematic, SchematicAnalysis, updateSchematic, WireInfo } from '@/utils/schematic-storage';
+import { getSchematic, SchematicAnalysis, updateSchematic, WireInfo } from '@/utils/schematic-storage';
 import CircuitBackground from '@/components/CircuitBackground';
 import { DEMO_SCHEMATIC } from '@/utils/demo-schematic';
 import PulsingLogo from '@/components/PulsingLogo';
@@ -109,7 +109,21 @@ function resolveNodeKey(schematic: SchematicAnalysis, point: string): string {
   return comp ? comp.label : p;
 }
 
+// Connections carry the schematic's wiring graph, but some analyses come
+// back with wires/components populated and an empty connections array (the
+// same case the "No connections detected" state on the analyze screen
+// already handles). When that happens, fall back to each wire's own
+// fromPoint/toPoint so the diagram still draws the actual wiring instead of
+// floating, unconnected component boxes with no edges between them.
+function resolveEdgeSource(schematic: SchematicAnalysis): { id: string; from: string; to: string; wireLabel: string }[] {
+  if (schematic.connections.length > 0) return schematic.connections;
+  return schematic.wires
+    .filter((w) => w.fromPoint && w.toPoint)
+    .map((w) => ({ id: `wire-${w.id}`, from: w.fromPoint, to: w.toPoint, wireLabel: w.label }));
+}
+
 function buildDiagram(schematic: SchematicAnalysis) {
+  const edgeSource = resolveEdgeSource(schematic);
   const order: string[] = [];
   const seen = new Set<string>();
   const pushKey = (k: string) => {
@@ -119,7 +133,7 @@ function buildDiagram(schematic: SchematicAnalysis) {
       order.push(key);
     }
   };
-  schematic.connections.forEach((c) => {
+  edgeSource.forEach((c) => {
     pushKey(c.from);
     pushKey(c.to);
   });
@@ -149,7 +163,7 @@ function buildDiagram(schematic: SchematicAnalysis) {
   const pairCounts = new Map<string, number>();
   const edges: DiagramEdge[] = [];
 
-  schematic.connections.forEach((c: Connection) => {
+  edgeSource.forEach((c) => {
     const from = nodeMap.get(resolveNodeKey(schematic, c.from));
     const to = nodeMap.get(resolveNodeKey(schematic, c.to));
     if (!from || !to) return;

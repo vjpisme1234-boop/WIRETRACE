@@ -32,6 +32,7 @@ import {
   StickyNote,
   Pencil,
   Play,
+  Plus,
   RefreshCw,
   Search,
   Send,
@@ -151,7 +152,9 @@ type StartPoint = 'beginning' | 'end' | 'specific' | 'custom';
 
 type EditTarget =
   | { kind: 'wire'; id: string }
+  | { kind: 'newWire' }
   | { kind: 'component'; id: string }
+  | { kind: 'newComponent' }
   | { kind: 'connection'; id: string }
   | { kind: 'summary' };
 
@@ -170,7 +173,19 @@ const EDIT_FIELDS: Record<EditTarget['kind'], EditFieldDef[]> = {
     { key: 'toPoint', label: 'To', labelEs: 'Hasta' },
     { key: 'voltage', label: 'Voltage', labelEs: 'Voltaje' },
   ],
+  newWire: [
+    { key: 'label', label: 'Wire Label', labelEs: 'Etiqueta del Cable' },
+    { key: 'color', label: 'Color', labelEs: 'Color' },
+    { key: 'fromPoint', label: 'From', labelEs: 'Desde' },
+    { key: 'toPoint', label: 'To', labelEs: 'Hasta' },
+    { key: 'voltage', label: 'Voltage', labelEs: 'Voltaje' },
+  ],
   component: [
+    { key: 'label', label: 'Component Label', labelEs: 'Etiqueta del Componente' },
+    { key: 'type', label: 'Type', labelEs: 'Tipo' },
+    { key: 'description', label: 'Description', labelEs: 'Descripción', multiline: true },
+  ],
+  newComponent: [
     { key: 'label', label: 'Component Label', labelEs: 'Etiqueta del Componente' },
     { key: 'type', label: 'Type', labelEs: 'Tipo' },
     { key: 'description', label: 'Description', labelEs: 'Descripción', multiline: true },
@@ -186,7 +201,9 @@ const EDIT_FIELDS: Record<EditTarget['kind'], EditFieldDef[]> = {
 
 const EDIT_TITLES: Record<EditTarget['kind'], { en: string; es: string }> = {
   wire: { en: 'Edit Wire', es: 'Editar Cable' },
+  newWire: { en: 'Add Wire', es: 'Agregar Cable' },
   component: { en: 'Edit Component', es: 'Editar Componente' },
+  newComponent: { en: 'Add Component', es: 'Agregar Componente' },
   connection: { en: 'Edit Connection', es: 'Editar Conexión' },
   summary: { en: 'Edit AI Summary', es: 'Editar Resumen AI' },
 };
@@ -554,6 +571,11 @@ export default function AnalyzeScreen() {
     });
   };
 
+  const openAddWire = () => {
+    setEditTarget({ kind: 'newWire' });
+    setEditValues({ label: '', color: '', fromPoint: '', toPoint: '', voltage: '' });
+  };
+
   const openEditComponent = (comp: ComponentInfo) => {
     setEditTarget({ kind: 'component', id: comp.id });
     setEditValues({
@@ -561,6 +583,11 @@ export default function AnalyzeScreen() {
       type: comp.type || '',
       description: comp.description || '',
     });
+  };
+
+  const openAddComponent = () => {
+    setEditTarget({ kind: 'newComponent' });
+    setEditValues({ label: '', type: '', description: '' });
   };
 
   const openEditConnection = (conn: Connection) => {
@@ -872,6 +899,23 @@ export default function AnalyzeScreen() {
             : w
         );
         updated = { ...schematic, wires, readingSteps: [] };
+      } else if (editTarget.kind === 'newWire') {
+        if (!editValues.label?.trim()) {
+          Alert.alert(es ? 'Falta la etiqueta' : 'Missing label', es ? 'Ingresa una etiqueta para el cable.' : 'Enter a label for the wire.');
+          setSavingEdit(false);
+          return;
+        }
+        const newWire: WireInfo = {
+          id: `wire_${Date.now()}`,
+          label: editValues.label.trim(),
+          color: editValues.color || undefined,
+          fromPoint: editValues.fromPoint || '',
+          toPoint: editValues.toPoint || '',
+          voltage: editValues.voltage || undefined,
+          confidence: 1,
+        };
+        const wires = [...schematic.wires, newWire];
+        updated = { ...schematic, wires, wireCount: wires.length, readingSteps: [] };
       } else if (editTarget.kind === 'component') {
         const components = schematic.components.map((c) =>
           c.id === editTarget.id
@@ -879,6 +923,22 @@ export default function AnalyzeScreen() {
             : c
         );
         updated = { ...schematic, components, readingSteps: [] };
+      } else if (editTarget.kind === 'newComponent') {
+        if (!editValues.label?.trim()) {
+          Alert.alert(es ? 'Falta la etiqueta' : 'Missing label', es ? 'Ingresa una etiqueta para el componente.' : 'Enter a label for the component.');
+          setSavingEdit(false);
+          return;
+        }
+        const newComponent: ComponentInfo = {
+          id: `comp_${Date.now()}`,
+          label: editValues.label.trim(),
+          type: editValues.type || 'unknown',
+          description: editValues.description || '',
+          isUnknown: false,
+          confidence: 1,
+        };
+        const components = [...schematic.components, newComponent];
+        updated = { ...schematic, components, componentCount: components.length, readingSteps: [] };
       } else if (editTarget.kind === 'connection') {
         const connections = schematic.connections.map((c) =>
           c.id === editTarget.id
@@ -910,7 +970,7 @@ export default function AnalyzeScreen() {
   };
 
   const handleDeleteEdit = async () => {
-    if (!schematic || !editTarget || editTarget.kind === 'summary') return;
+    if (!schematic || !editTarget || editTarget.kind === 'summary' || editTarget.kind === 'newWire' || editTarget.kind === 'newComponent') return;
     setSavingEdit(true);
     try {
       let updated: SchematicAnalysis = schematic;
@@ -1325,6 +1385,11 @@ export default function AnalyzeScreen() {
                 <View style={styles.countBadge}>
                   <Text style={styles.countBadgeText}>{schematic.wireCount}</Text>
                 </View>
+                <View style={{ flex: 1 }} />
+                <AnimatedPressable onPress={openAddWire} style={styles.addWireBtn} scaleValue={0.92}>
+                  <Plus size={14} color={WT.blue} />
+                  <Text style={styles.addWireBtnText}>{es ? 'Agregar' : 'Add Wire'}</Text>
+                </AnimatedPressable>
               </View>
               {schematic.wires.length === 0 ? (
                 <Text style={styles.emptyCardText}>{es ? 'No se detectaron cables' : 'No wires detected'}</Text>
@@ -1422,6 +1487,11 @@ export default function AnalyzeScreen() {
                 <View style={styles.countBadge}>
                   <Text style={styles.countBadgeText}>{schematic.componentCount}</Text>
                 </View>
+                <View style={{ flex: 1 }} />
+                <AnimatedPressable onPress={openAddComponent} style={styles.addWireBtn} scaleValue={0.92}>
+                  <Plus size={14} color={WT.blue} />
+                  <Text style={styles.addWireBtnText}>{es ? 'Agregar' : 'Add Component'}</Text>
+                </AnimatedPressable>
               </View>
               {schematic.components.length === 0 ? (
                 <Text style={styles.emptyCardText}>{es ? 'No se detectaron componentes' : 'No components detected'}</Text>
@@ -1880,7 +1950,7 @@ export default function AnalyzeScreen() {
             </ScrollView>
 
             <View style={styles.modalActions}>
-              {editTarget && editTarget.kind !== 'summary' && (
+              {editTarget && editTarget.kind !== 'summary' && editTarget.kind !== 'newWire' && editTarget.kind !== 'newComponent' && (
                 <AnimatedPressable onPress={handleDeleteEdit} style={styles.modalDeleteBtn} disabled={savingEdit} scaleValue={0.95}>
                   <Trash2 size={16} color={WT.red} />
                   <Text style={styles.modalDeleteText}>{es ? 'Eliminar' : 'Delete'}</Text>
@@ -2257,6 +2327,20 @@ const styles = StyleSheet.create({
   },
   countBadgeWarning: {
     backgroundColor: WT.yellowMuted,
+  },
+  addWireBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingHorizontal: 8,
+    paddingVertical: 5,
+    borderRadius: 8,
+    backgroundColor: WT.blueMuted,
+  },
+  addWireBtnText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: WT.blue,
   },
   countBadgeTextWarning: {
     color: WT.yellow,

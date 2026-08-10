@@ -11,7 +11,7 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import * as SecureStore from 'expo-secure-store';
-import { ArrowLeft, CheckCircle, Info, Key, Mic, Zap } from 'lucide-react-native';
+import { ArrowLeft, CheckCircle, Info, Key, Mic, Minimize2, Zap } from 'lucide-react-native';
 import { WT, STORAGE_KEYS } from '@/constants/wiretrace';
 import { loadTTSSettings, saveTTSSettings, speakTextWithSettings, stopSpeech, TTSSettings } from '@/utils/tts';
 import { DEFAULT_UI_PREFERENCES, LayoutPreset, loadUIPreferences, saveUIPreferences, UIPreferences, VisualMode, VisionProviderPreference } from '@/utils/ui-preferences';
@@ -582,6 +582,27 @@ export default function SettingsScreen() {
             {es
               ? 'Al grabar una nota de voz en un cable o componente, elige si se muestra como texto en pantalla o solo se escucha en voz alta.'
               : 'When you record a voice note on a wire or component, choose whether it shows as text on screen or only plays back out loud.'}
+          </Text>
+        </View>
+
+        <View style={styles.section}>
+          <View style={styles.sectionHeader}>
+            <Minimize2 size={16} color={WT.blue} />
+            <Text style={styles.sectionTitle}>{es ? 'Estilo de Lectura' : 'Reading Style'}</Text>
+          </View>
+          <SegmentControl
+            options={['detailed', 'brief'] as const}
+            value={uiPrefs.briefMode ? 'brief' : 'detailed'}
+            onChange={(v) => {
+              console.log('[Settings] Reading style changed', { briefMode: v === 'brief' });
+              updateUiPrefs({ briefMode: v === 'brief' });
+            }}
+            labels={es ? { detailed: 'Detallado', brief: 'Breve' } : { detailed: 'Detailed', brief: 'Brief' }}
+          />
+          <Text style={styles.fieldHint}>
+            {es
+              ? 'Breve lee y muestra cada paso de cable como solo el número de cable y los puntos: "102 de TB-1 a TB-2", sin la explicación completa de la AI. Detallado muestra la instrucción completa de la AI para cada paso.'
+              : 'Brief reads and shows each wire step as just the wire number and its points: "102 from TB-1 to TB-2" — no full AI explanation. Detailed shows the AI\'s full instruction for each step.'}
           </Text>
         </View>
 

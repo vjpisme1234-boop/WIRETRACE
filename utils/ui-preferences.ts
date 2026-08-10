@@ -11,6 +11,8 @@ export interface UIPreferences {
   visionProvider: VisionProviderPreference;
   /** Whether voice-note text is shown as a badge/popup, or stays audio-only (spoken back via TTS). */
   notesVisible: boolean;
+  /** When true, wire steps are shown/spoken as just "<wire#> from <point> to <point>" instead of the full AI instruction. */
+  briefMode: boolean;
 }
 
 export const DEFAULT_UI_PREFERENCES: UIPreferences = {
@@ -22,6 +24,7 @@ export const DEFAULT_UI_PREFERENCES: UIPreferences = {
   // this to 'all' automatically the first time a user adds a paid key.
   visionProvider: 'gemini',
   notesVisible: true,
+  briefMode: false,
 };
 
 const LEGACY_VISUAL_MODE_MAP: Record<string, VisualMode> = {
@@ -67,6 +70,7 @@ export async function loadUIPreferences(): Promise<UIPreferences> {
       layoutPreset: normalizeLayoutPreset(parsed.layoutPreset),
       visionProvider: normalizeVisionProvider(parsed.visionProvider),
       notesVisible: typeof parsed.notesVisible === 'boolean' ? parsed.notesVisible : DEFAULT_UI_PREFERENCES.notesVisible,
+      briefMode: typeof parsed.briefMode === 'boolean' ? parsed.briefMode : DEFAULT_UI_PREFERENCES.briefMode,
     };
   } catch (error) {
     console.error('[UI Preferences] Failed to load preferences', error);

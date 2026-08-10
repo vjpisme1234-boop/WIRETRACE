@@ -58,6 +58,29 @@ function getStepWireColor(step: ReadingStep, schematic: SchematicAnalysis | null
   return WIRE_COLOR_MAP[match.color.toLowerCase()] || null;
 }
 
+/**
+ * Brief mode: "<wire#> from <point> to <point>" instead of the full AI
+ * instruction. Falls back to the normal instruction for steps that aren't
+ * tied to a wire with known endpoints (e.g. component-only steps).
+ */
+function getStepInstructionText(
+  step: ReadingStep,
+  schematic: SchematicAnalysis | null,
+  briefMode: boolean,
+  isSpanish: boolean
+): string {
+  if (briefMode && step.wireLabel && schematic) {
+    const label = normalizeWireLabel(step.wireLabel);
+    const wire = schematic.wires.find((w) => normalizeWireLabel(w.label) === label);
+    if (wire?.fromPoint && wire?.toPoint) {
+      return isSpanish
+        ? `${wire.label} de ${wire.fromPoint} a ${wire.toPoint}`
+        : `${wire.label} from ${wire.fromPoint} to ${wire.toPoint}`;
+    }
+  }
+  return step.instruction;
+}
+
 function AnimatedPressable({
   onPress,
   style,
@@ -501,12 +524,13 @@ export default function ReaderScreen() {
         : undefined;
       noteText = wire?.userNote || comp?.userNote;
     }
-    const spoken = noteText ? `${step.instruction} ${noteText}` : step.instruction;
+    const instructionText = getStepInstructionText(step, schematicForHelp, uiPrefs.briefMode, speechLanguage === 'spanish');
+    const spoken = noteText ? `${instructionText} ${noteText}` : instructionText;
     speakText(spoken, () => {
       console.log('[Reader] Speech done for step', currentIndex);
       startVoiceListening();
     });
-  }, [currentIndex, schematicForHelp, steps, startVoiceListening, stopVoiceListening]);
+  }, [currentIndex, schematicForHelp, speechLanguage, steps, startVoiceListening, stopVoiceListening, uiPrefs.briefMode]);
 
   const handleHelpQuestion = useCallback(async (question: string) => {
     if (!schematicForHelp) {
@@ -706,13 +730,14 @@ export default function ReaderScreen() {
         : undefined;
       noteText = wire?.userNote || comp?.userNote;
     }
-    const spoken = noteText ? `${step.instruction} ${noteText}` : step.instruction;
+    const instructionText = getStepInstructionText(step, schematicForHelp, uiPrefs.briefMode, speechLanguage === 'spanish');
+    const spoken = noteText ? `${instructionText} ${noteText}` : instructionText;
 
     speakText(spoken, () => {
       console.log('[Reader] Speech done for step', currentIndex);
       startVoiceListening();
     });
-  }, [animateIn, currentIndex, loading, progressAnim, schematicForHelp, startVoiceListening, steps, stopVoiceListening]);
+  }, [animateIn, currentIndex, loading, progressAnim, schematicForHelp, speechLanguage, startVoiceListening, steps, stopVoiceListening, uiPrefs.briefMode]);
 
   const handleToggleVoiceNext = () => {
     const next = !voiceNextEnabled;
@@ -909,7 +934,7 @@ export default function ReaderScreen() {
             </Text>
           )}
           <Text style={[styles.instruction, isLightMode && styles.instructionLight, isHighContrast && styles.instructionHighContrast, isDark && styles.instructionDark]}>
-            {step.instruction}
+            {getStepInstructionText(step, schematicForHelp, uiPrefs.briefMode, speechLanguage === 'spanish')}
           </Text>
           {step.componentLabel && !isResidentialLayout && (
             <View style={[styles.componentBadge, isLightMode && styles.componentBadgeLight, isDark && styles.componentBadgeDark]}>
@@ -918,10 +943,10 @@ export default function ReaderScreen() {
               </Text>
             </View>
           )}
-          {(step.detail && !isResidentialLayout) && (
+          {(step.detail && !isResidentialLayout && !uiPrefs.briefMode) && (
             <Text style={[styles.detail, isLightMode && styles.detailLight, isDark && styles.detailDark]}>{step.detail}</Text>
           )}
-          {step.specialInstruction && (isCommercialLayout || isDark) && (
+          {step.specialInstruction && (isCommercialLayout || isDark) && !uiPrefs.briefMode && (
             <View style={[styles.specialBox, isLightMode && styles.specialBoxLight, isDark && styles.specialBoxDark]}>
               <Text style={[styles.specialLabel, isDark && styles.specialLabelDark]}>
                 {speechLanguage === 'spanish' ? 'Instrucción especial' : 'Special Instruction'}

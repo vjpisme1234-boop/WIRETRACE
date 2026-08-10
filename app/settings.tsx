@@ -14,7 +14,7 @@ import * as SecureStore from 'expo-secure-store';
 import { ArrowLeft, CheckCircle, Info, Key, Mic, Minimize2, Zap } from 'lucide-react-native';
 import { WT, STORAGE_KEYS } from '@/constants/wiretrace';
 import { loadTTSSettings, saveTTSSettings, speakTextWithSettings, stopSpeech, TTSSettings } from '@/utils/tts';
-import { DEFAULT_UI_PREFERENCES, LayoutPreset, loadUIPreferences, saveUIPreferences, UIPreferences, VisualMode, VisionProviderPreference } from '@/utils/ui-preferences';
+import { DEFAULT_UI_PREFERENCES, LayoutPreset, loadUIPreferences, ReadingStyle, saveUIPreferences, UIPreferences, VisualMode, VisionProviderPreference } from '@/utils/ui-preferences';
 import PulsingLogo from '@/components/PulsingLogo';
 
 function AnimatedPressable({
@@ -591,18 +591,22 @@ export default function SettingsScreen() {
             <Text style={styles.sectionTitle}>{es ? 'Estilo de Lectura' : 'Reading Style'}</Text>
           </View>
           <SegmentControl
-            options={['detailed', 'brief'] as const}
-            value={uiPrefs.briefMode ? 'brief' : 'detailed'}
+            options={['detailed', 'brief', 'destinationOnly'] as ReadingStyle[]}
+            value={uiPrefs.readingStyle}
             onChange={(v) => {
-              console.log('[Settings] Reading style changed', { briefMode: v === 'brief' });
-              updateUiPrefs({ briefMode: v === 'brief' });
+              console.log('[Settings] Reading style changed', { readingStyle: v });
+              updateUiPrefs({ readingStyle: v });
             }}
-            labels={es ? { detailed: 'Detallado', brief: 'Breve' } : { detailed: 'Detailed', brief: 'Brief' }}
+            labels={
+              es
+                ? { detailed: 'Detallado', brief: 'Breve', destinationOnly: 'Solo Destino' }
+                : { detailed: 'Detailed', brief: 'Brief', destinationOnly: 'Wire + Destination' }
+            }
           />
           <Text style={styles.fieldHint}>
             {es
-              ? 'Breve lee y muestra cada paso de cable como solo el número de cable y los puntos: "102 de TB-1 a TB-2", sin la explicación completa de la AI. Detallado muestra la instrucción completa de la AI para cada paso.'
-              : 'Brief reads and shows each wire step as just the wire number and its points: "102 from TB-1 to TB-2" — no full AI explanation. Detailed shows the AI\'s full instruction for each step.'}
+              ? 'Detallado muestra la instrucción completa de la AI para cada paso. Breve lee solo el número de cable y ambos puntos: "102 de TB-1 a TB-2". Solo Destino (nombrado "solo cable y destino") lee solo el número de cable y a dónde va, sin el punto de origen: "Cable número 102 a TB-2".'
+              : 'Detailed shows the AI\'s full instruction for each step. Brief reads just the wire number and both points: "102 from TB-1 to TB-2". Wire + Destination (named "wire and destination only") reads just the wire number and where it goes, leaving out the source point: "Wire number 102 to TB-2".'}
           </Text>
         </View>
 

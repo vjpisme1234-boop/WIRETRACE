@@ -23,7 +23,7 @@ import { getSchematic, saveSchematic, ReadingStep, SchematicAnalysis } from '@/u
 import { answerSchematicQuestion, continueReadingSteps, generateReadingSteps } from '@/utils/openrouter';
 import { getUncoveredWires, JunctionChoice, JunctionOption, matchJunctionAnswer } from '@/utils/schematic-graph';
 import { loadTTSSettings, speakText, stopSpeech } from '@/utils/tts';
-import { DEFAULT_UI_PREFERENCES, loadUIPreferences } from '@/utils/ui-preferences';
+import { DEFAULT_UI_PREFERENCES, loadUIPreferences, ReadingStyle } from '@/utils/ui-preferences';
 import PulsingLogo from '@/components/PulsingLogo';
 
 const WIRE_COLOR_MAP: Record<string, string> = {
@@ -59,23 +59,30 @@ function getStepWireColor(step: ReadingStep, schematic: SchematicAnalysis | null
 }
 
 /**
- * Brief mode: "<wire#> from <point> to <point>" instead of the full AI
- * instruction. Falls back to the normal instruction for steps that aren't
- * tied to a wire with known endpoints (e.g. component-only steps).
+ * Alternate step phrasings, used in place of the full AI instruction:
+ *  - brief: "<wire#> from <point> to <point>"
+ *  - destinationOnly: "Wire number <wire#> to <point>" (source point omitted)
+ * Falls back to the normal instruction for steps that aren't tied to a wire
+ * with known endpoints (e.g. component-only steps).
  */
 function getStepInstructionText(
   step: ReadingStep,
   schematic: SchematicAnalysis | null,
-  briefMode: boolean,
+  readingStyle: ReadingStyle,
   isSpanish: boolean
 ): string {
-  if (briefMode && step.wireLabel && schematic) {
+  if (readingStyle !== 'detailed' && step.wireLabel && schematic) {
     const label = normalizeWireLabel(step.wireLabel);
     const wire = schematic.wires.find((w) => normalizeWireLabel(w.label) === label);
-    if (wire?.fromPoint && wire?.toPoint) {
+    if (readingStyle === 'brief' && wire?.fromPoint && wire?.toPoint) {
       return isSpanish
         ? `${wire.label} de ${wire.fromPoint} a ${wire.toPoint}`
         : `${wire.label} from ${wire.fromPoint} to ${wire.toPoint}`;
+    }
+    if (readingStyle === 'destinationOnly' && wire?.toPoint) {
+      return isSpanish
+        ? `Cable número ${wire.label} a ${wire.toPoint}`
+        : `Wire number ${wire.label} to ${wire.toPoint}`;
     }
   }
   return step.instruction;
@@ -524,13 +531,13 @@ export default function ReaderScreen() {
         : undefined;
       noteText = wire?.userNote || comp?.userNote;
     }
-    const instructionText = getStepInstructionText(step, schematicForHelp, uiPrefs.briefMode, speechLanguage === 'spanish');
+    const instructionText = getStepInstructionText(step, schematicForHelp, uiPrefs.readingStyle, speechLanguage === 'spanish');
     const spoken = noteText ? `${instructionText} ${noteText}` : instructionText;
     speakText(spoken, () => {
       console.log('[Reader] Speech done for step', currentIndex);
       startVoiceListening();
     });
-  }, [currentIndex, schematicForHelp, speechLanguage, steps, startVoiceListening, stopVoiceListening, uiPrefs.briefMode]);
+  }, [currentIndex, schematicForHelp, speechLanguage, steps, startVoiceListening, stopVoiceListening, uiPrefs.readingStyle]);
 
   const handleHelpQuestion = useCallback(async (question: string) => {
     if (!schematicForHelp) {
@@ -730,14 +737,14 @@ export default function ReaderScreen() {
         : undefined;
       noteText = wire?.userNote || comp?.userNote;
     }
-    const instructionText = getStepInstructionText(step, schematicForHelp, uiPrefs.briefMode, speechLanguage === 'spanish');
+    const instructionText = getStepInstructionText(step, schematicForHelp, uiPrefs.readingStyle, speechLanguage === 'spanish');
     const spoken = noteText ? `${instructionText} ${noteText}` : instructionText;
 
     speakText(spoken, () => {
       console.log('[Reader] Speech done for step', currentIndex);
       startVoiceListening();
     });
-  }, [animateIn, currentIndex, loading, progressAnim, schematicForHelp, speechLanguage, startVoiceListening, steps, stopVoiceListening, uiPrefs.briefMode]);
+  }, [animateIn, currentIndex, loading, progressAnim, schematicForHelp, speechLanguage, startVoiceListening, steps, stopVoiceListening, uiPrefs.readingStyle]);
 
   const handleToggleVoiceNext = () => {
     const next = !voiceNextEnabled;
@@ -934,7 +941,7 @@ export default function ReaderScreen() {
             </Text>
           )}
           <Text style={[styles.instruction, isLightMode && styles.instructionLight, isHighContrast && styles.instructionHighContrast, isDark && styles.instructionDark]}>
-            {getStepInstructionText(step, schematicForHelp, uiPrefs.briefMode, speechLanguage === 'spanish')}
+            {getStepInstructionText(step, schematicForHelp, uiPrefs.readingStyle, speechLanguage === 'spanish')}
           </Text>
           {step.componentLabel && !isResidentialLayout && (
             <View style={[styles.componentBadge, isLightMode && styles.componentBadgeLight, isDark && styles.componentBadgeDark]}>
@@ -943,10 +950,10 @@ export default function ReaderScreen() {
               </Text>
             </View>
           )}
-          {(step.detail && !isResidentialLayout && !uiPrefs.briefMode) && (
+          {(step.detail && !isResidentialLayout && uiPrefs.readingStyle === 'detailed') && (
             <Text style={[styles.detail, isLightMode && styles.detailLight, isDark && styles.detailDark]}>{step.detail}</Text>
           )}
-          {step.specialInstruction && (isCommercialLayout || isDark) && !uiPrefs.briefMode && (
+          {step.specialInstruction && (isCommercialLayout || isDark) && uiPrefs.readingStyle === 'detailed' && (
             <View style={[styles.specialBox, isLightMode && styles.specialBoxLight, isDark && styles.specialBoxDark]}>
               <Text style={[styles.specialLabel, isDark && styles.specialLabelDark]}>
                 {speechLanguage === 'spanish' ? 'Instrucción especial' : 'Special Instruction'}

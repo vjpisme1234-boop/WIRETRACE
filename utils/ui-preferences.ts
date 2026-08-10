@@ -4,6 +4,13 @@ import { STORAGE_KEYS } from '@/constants/wiretrace';
 export type VisualMode = 'normalLight' | 'highContrast' | 'dark';
 export type LayoutPreset = 'industrial' | 'residential' | 'commercial';
 export type VisionProviderPreference = 'all' | 'anthropic' | 'openrouter' | 'openai' | 'gemini';
+/**
+ * How wire steps are read/shown:
+ *  - detailed: the full AI-generated instruction (default)
+ *  - brief: "<wire#> from <point> to <point>"
+ *  - destinationOnly: "Wire number <wire#> to <point>" (source point omitted)
+ */
+export type ReadingStyle = 'detailed' | 'brief' | 'destinationOnly';
 
 export interface UIPreferences {
   visualMode: VisualMode;
@@ -11,8 +18,7 @@ export interface UIPreferences {
   visionProvider: VisionProviderPreference;
   /** Whether voice-note text is shown as a badge/popup, or stays audio-only (spoken back via TTS). */
   notesVisible: boolean;
-  /** When true, wire steps are shown/spoken as just "<wire#> from <point> to <point>" instead of the full AI instruction. */
-  briefMode: boolean;
+  readingStyle: ReadingStyle;
 }
 
 export const DEFAULT_UI_PREFERENCES: UIPreferences = {
@@ -24,7 +30,7 @@ export const DEFAULT_UI_PREFERENCES: UIPreferences = {
   // this to 'all' automatically the first time a user adds a paid key.
   visionProvider: 'gemini',
   notesVisible: true,
-  briefMode: false,
+  readingStyle: 'detailed',
 };
 
 const LEGACY_VISUAL_MODE_MAP: Record<string, VisualMode> = {
@@ -60,6 +66,18 @@ function normalizeVisionProvider(value: unknown): VisionProviderPreference {
   return DEFAULT_UI_PREFERENCES.visionProvider;
 }
 
+function normalizeReadingStyle(parsed: Partial<UIPreferences> & { briefMode?: boolean }): ReadingStyle {
+  if (parsed.readingStyle === 'detailed' || parsed.readingStyle === 'brief' || parsed.readingStyle === 'destinationOnly') {
+    return parsed.readingStyle;
+  }
+  // Migrate the old boolean brief-mode toggle for users who set it before
+  // destinationOnly existed.
+  if (typeof parsed.briefMode === 'boolean') {
+    return parsed.briefMode ? 'brief' : 'detailed';
+  }
+  return DEFAULT_UI_PREFERENCES.readingStyle;
+}
+
 export async function loadUIPreferences(): Promise<UIPreferences> {
   try {
     const raw = await SecureStore.getItemAsync(STORAGE_KEYS.UI_PREFS);
@@ -70,7 +88,7 @@ export async function loadUIPreferences(): Promise<UIPreferences> {
       layoutPreset: normalizeLayoutPreset(parsed.layoutPreset),
       visionProvider: normalizeVisionProvider(parsed.visionProvider),
       notesVisible: typeof parsed.notesVisible === 'boolean' ? parsed.notesVisible : DEFAULT_UI_PREFERENCES.notesVisible,
-      briefMode: typeof parsed.briefMode === 'boolean' ? parsed.briefMode : DEFAULT_UI_PREFERENCES.briefMode,
+      readingStyle: normalizeReadingStyle(parsed),
     };
   } catch (error) {
     console.error('[UI Preferences] Failed to load preferences', error);

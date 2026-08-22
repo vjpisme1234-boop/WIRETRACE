@@ -14,9 +14,10 @@ import {
 import { validateAnalysisConsistency } from '@/utils/schematic-validation';
 import { salvagePartialAnalysis, salvagePartialReadingSteps } from '@/utils/partial-json';
 
-// gpt-4o, not gpt-4o-mini: OpenAI is the rung that has to carry a scan when
-// Anthropic is down, and mini is the weakest vision model of the family — as a
-// fallback it was quietly downgrading the read rather than rescuing it.
+// gpt-4o, not gpt-4o-mini: OpenAI is a rung that has to carry a scan when
+// Anthropic and Gemini are both down, and mini is the weakest vision model of
+// the family — as a fallback it was quietly downgrading the read rather than
+// rescuing it.
 const OPENAI_MODEL = process.env.EXPO_PUBLIC_OPENAI_MODEL || 'gpt-4o';
 const ANTHROPIC_MODEL = process.env.EXPO_PUBLIC_ANTHROPIC_MODEL || 'claude-sonnet-5';
 
@@ -253,23 +254,19 @@ async function buildProviderAttempts(
     getGeminiKey(),
   ]);
 
-  // Ordered for accuracy first, then for surviving an outage. Anthropic reads
-  // schematics best, so it leads. OpenAI is second precisely because it is a
-  // different vendor — if Anthropic is down, this is the rung that still
-  // answers. OpenRouter sits below it despite being a paid key, because it is
-  // now routed to an Anthropic model too and would go down in the same outage.
-  // Gemini (the free baked-in default) stays last as the guaranteed floor —
-  // that is what lets the app work out of the box for a fresh install or an
-  // app-store reviewer with no keys configured.
+  // Claude leads for accuracy. Gemini sits right behind it as the fast,
+  // always-available fallback (the baked-in key with no setup required).
+  // OpenAI and OpenRouter follow as further fallbacks for when both of
+  // those are unavailable or exhausted.
   const candidates: { name: ProviderName; model: string; key: string }[] = [
     { name: 'anthropic', model: ANTHROPIC_MODEL, key: anthropicKey },
     // Present only when the operator opted in; see ANTHROPIC_FALLBACK_MODEL.
     ...(ANTHROPIC_FALLBACK_MODEL
       ? [{ name: 'anthropic' as ProviderName, model: ANTHROPIC_FALLBACK_MODEL, key: anthropicKey }]
       : []),
+    { name: 'gemini', model: GEMINI_MODEL, key: geminiKey },
     { name: 'openai', model: OPENAI_MODEL, key: openAIKey },
     { name: 'openrouter', model: OPENROUTER_MODEL, key: openRouterKey },
-    { name: 'gemini', model: GEMINI_MODEL, key: geminiKey },
   ];
 
   // Filtering still keys off the provider name alone, so picking "anthropic"
@@ -311,6 +308,8 @@ async function runWithFallback(
   }
 
   const errors: string[] = [];
+  let lastFreeAllowanceError: Error | null = null;
+
   for (const attempt of attempts) {
     try {
       console.log('[AI] Attempting provider', { provider: attempt.name, model: attempt.model });
@@ -318,21 +317,36 @@ async function runWithFallback(
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       console.error('[AI] Provider failed', { provider: attempt.name, model: attempt.model, message });
-      // Hitting the free allowance isn't a failure the user can act on by
-      // retrying — the message already tells them exactly what to do, so it
-      // goes back untouched rather than buried behind "All AI providers
-      // failed" and an internal model id. On a keyless install this is the
-      // most common error the app shows, and it is the one that sells a key.
-      if (isFreeAllowanceError(error)) throw error;
+      // A used-up free allowance no longer stops the chain outright — Gemini
+      // sitting early in the chain means an exhausted allowance should fall
+      // through to OpenAI/OpenRouter rather than ending the scan. The
+      // specific message is held onto so it can still be surfaced if every
+      // other rung also fails, since it's more actionable than the generic
+      // aggregate.
+      if (isFreeAllowanceError(error)) {
+        lastFreeAllowanceError = error as Error;
+        continue;
+      }
       // The model goes in the clause too: two Anthropic rungs would otherwise
       // produce two indistinguishable lines in the aggregated failure message.
       errors.push(`${attempt.name} (${attempt.model}): ${message}`);
     }
   }
 
+  // Every rung failed. If the only failures were a used-up free allowance
+  // (no other provider configured/working), that specific, actionable
+  // message beats a generic aggregate.
+  if (errors.length === 0 && lastFreeAllowanceError) {
+    throw lastFreeAllowanceError;
+  }
+
   // One configured provider means there was no fallback to speak of; the
   // plural aggregate would overstate what was actually tried.
-  if (errors.length === 1) throw new Error(errors[0]);
+  if (errors.length === 1 && !lastFreeAllowanceError) throw new Error(errors[0]);
+
+  if (lastFreeAllowanceError) {
+    errors.push(`gemini: ${lastFreeAllowanceError.message}`);
+  }
 
   throw new Error(`All AI providers failed. ${errors.join(' | ')}`);
 }
@@ -563,8 +577,8 @@ export async function analyzeSchematic(base64Image: string): Promise<AnalysisRes
   console.log('[OpenRouter] analyzeSchematic called, image size:', base64Image.length);
 
   const imageUrl = `data:image/jpeg;base64,${base64Image}`;
-  const prompt = `${ANALYSIS_SYSTEM_PROMPT}\n\nAnalyze this electrical schematic and extract ALL wiring information as specified.`;
-  const content = await callVisionWithFallback(imageUrl, prompt);
+  const prompt = 'Analyze this electrical schematic and extract ALL wiring information as specified.';
+  const content = await callVisionWithFallback(imageUrl, prompt, ANALYSIS_SYSTEM_PROMPT);
 
   const parsed = parseAnalysisWithSalvage(content, 'analyzeSchematic');
   console.log('[OpenRouter] analyzeSchematic parsed', {

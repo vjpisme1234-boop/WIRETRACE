@@ -269,7 +269,7 @@ export default function SettingsScreen() {
           {saved ? (
             <CheckCircle size={20} color={WT.green} />
           ) : (
-            <Text style={styles.saveBtnText}>{es ? 'Guardar' : 'Save'}</Text>
+            <Text style={styles.saveBtnText} numberOfLines={1}>{es ? 'Guardar' : 'Save'}</Text>
           )}
         </AnimatedPressable>
       </View>
@@ -727,8 +727,11 @@ const styles = StyleSheet.create({
     color: WT.textPrimary,
   },
   saveBtn: {
-    width: 44,
+    // Wide enough for the label rather than a fixed icon-sized box: at 44px
+    // "Save" wrapped to two lines on a Fold, and "Guardar" is longer still.
+    minWidth: 44,
     height: 44,
+    paddingHorizontal: 10,
     alignItems: 'center',
     justifyContent: 'center',
   },

@@ -73,16 +73,26 @@ function SegmentControl<T extends string>({
         const isActive = value === opt;
         const label = labels ? labels[opt] : opt;
         return (
-          <AnimatedPressable
-            key={opt}
-            onPress={() => onChange(opt)}
-            style={[segStyles.seg, isActive && segStyles.segActive]}
-            scaleValue={0.95}
-          >
-            <Text style={[segStyles.segText, isActive && segStyles.segTextActive]}>
-              {label}
-            </Text>
-          </AnimatedPressable>
+          // The press wrapper is content-sized, so the flex that spreads the
+          // options evenly across the row has to live on this View
+          <View key={opt} style={segStyles.segWrap}>
+            <AnimatedPressable
+              onPress={() => onChange(opt)}
+              style={[segStyles.seg, isActive && segStyles.segActive]}
+              scaleValue={0.95}
+            >
+              <Text
+                style={[segStyles.segText, isActive && segStyles.segTextActive]}
+                numberOfLines={1}
+                // Long labels like "Wire + Destination" shrink to fit rather
+                // than wrapping or getting cut off on narrow phones
+                adjustsFontSizeToFit
+                minimumFontScale={0.75}
+              >
+                {label}
+              </Text>
+            </AnimatedPressable>
+          </View>
         );
       })}
     </View>
@@ -94,14 +104,18 @@ const segStyles = StyleSheet.create({
     flexDirection: 'row',
     backgroundColor: WT.bgCardAlt,
     borderRadius: 10,
-    padding: 3,
-    gap: 2,
+    padding: 4,
+    gap: 8,
+  },
+  segWrap: {
+    flex: 1,
   },
   seg: {
-    flex: 1,
-    paddingVertical: 8,
+    paddingVertical: 9,
+    paddingHorizontal: 6,
     borderRadius: 8,
     alignItems: 'center',
+    justifyContent: 'center',
   },
   segActive: {
     backgroundColor: WT.bgCard,
@@ -112,6 +126,7 @@ const segStyles = StyleSheet.create({
     fontSize: 13,
     fontWeight: '500',
     color: WT.textSecondary,
+    textAlign: 'center',
   },
   segTextActive: {
     color: WT.textPrimary,

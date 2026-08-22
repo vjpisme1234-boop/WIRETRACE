@@ -26,6 +26,12 @@ export const WT = {
   blueMuted: 'rgba(0,180,255,0.12)',
   blueDim: 'rgba(0,180,255,0.25)',
 
+  // Pink — matches the logo / home background flow lines
+  pink: '#FF12D6',
+  pinkBright: '#FFA3FF',
+  pinkMuted: 'rgba(255,18,214,0.14)',
+  pinkDim: 'rgba(255,18,214,0.28)',
+
   // Status
   yellow: '#FFD60A',
   yellowMuted: 'rgba(255,214,10,0.12)',

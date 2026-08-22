@@ -147,6 +147,43 @@ function SkeletonCard() {
   );
 }
 
+// Analysis is one long vision call with no byte-level progress to report, so
+// the bar is driven off the stages we *can* observe (image prep, request sent,
+// save) and creeps toward 90% while the model is thinking. It only reaches
+// 100% when the analysis actually lands.
+function AnalysisProgressBar({ progress }: { progress: Animated.Value }) {
+  const width = progress.interpolate({
+    inputRange: [0, 1],
+    outputRange: ['0%', '100%'],
+    extrapolate: 'clamp',
+  });
+
+  // Blue glow behind the pink fill, breathing in time with the header bolt.
+  // Kept on its own node so the native-driven opacity never collides with the
+  // JS-driven width on the fill itself.
+  const pulse = useRef(new Animated.Value(0)).current;
+  useEffect(() => {
+    const loop = Animated.loop(
+      Animated.sequence([
+        Animated.timing(pulse, { toValue: 1, duration: 900, useNativeDriver: true }),
+        Animated.timing(pulse, { toValue: 0, duration: 900, useNativeDriver: true }),
+      ])
+    );
+    loop.start();
+    return () => loop.stop();
+  }, [pulse]);
+  const glowOpacity = pulse.interpolate({ inputRange: [0, 1], outputRange: [0.18, 0.6] });
+
+  return (
+    <View style={styles.progressTrack}>
+      <Animated.View style={[styles.progressGlow, { opacity: glowOpacity }]} />
+      <Animated.View style={[styles.progressFill, { width }]}>
+        <View style={styles.progressTip} />
+      </Animated.View>
+    </View>
+  );
+}
+
 type ReadingDirection = 'forward' | 'backward';
 type StartPoint = 'beginning' | 'end' | 'specific' | 'custom';
 
@@ -264,6 +301,63 @@ export default function AnalyzeScreen() {
 
   const pulseAnim = useRef(new Animated.Value(0.6)).current;
 
+  // Progress bars — one for the analysis run, one for step generation
+  const progressAnim = useRef(new Animated.Value(0)).current;
+  const progressAnimRef = useRef<Animated.CompositeAnimation | null>(null);
+  const [progressStage, setProgressStage] = useState<string | null>(null);
+  const stepsProgressAnim = useRef(new Animated.Value(0)).current;
+  const stepsProgressAnimRef = useRef<Animated.CompositeAnimation | null>(null);
+
+  const driveProgress = useCallback(
+    (
+      value: Animated.Value,
+      holder: React.MutableRefObject<Animated.CompositeAnimation | null>,
+      toValue: number,
+      duration: number
+    ) => {
+      holder.current?.stop();
+      const anim = Animated.timing(value, {
+        toValue,
+        duration,
+        // width is a layout prop — it can't run on the native driver
+        useNativeDriver: false,
+      });
+      holder.current = anim;
+      anim.start();
+    },
+    []
+  );
+
+  const animateProgressTo = useCallback(
+    (toValue: number, duration: number) => driveProgress(progressAnim, progressAnimRef, toValue, duration),
+    [driveProgress, progressAnim]
+  );
+
+  const animateStepsProgressTo = useCallback(
+    (toValue: number, duration: number) =>
+      driveProgress(stepsProgressAnim, stepsProgressAnimRef, toValue, duration),
+    [driveProgress, stepsProgressAnim]
+  );
+
+  const resetStepsProgress = useCallback(() => {
+    stepsProgressAnimRef.current?.stop();
+    stepsProgressAnimRef.current = null;
+    stepsProgressAnim.setValue(0);
+  }, [stepsProgressAnim]);
+
+  const resetProgress = useCallback(() => {
+    progressAnimRef.current?.stop();
+    progressAnimRef.current = null;
+    progressAnim.setValue(0);
+  }, [progressAnim]);
+
+  useEffect(() => {
+    return () => {
+      progressAnimRef.current?.stop();
+      stepsProgressAnimRef.current?.stop();
+    };
+  }, []);
+
   useEffect(() => {
     const pulse = Animated.loop(
       Animated.sequence([
@@ -314,14 +408,25 @@ export default function AnalyzeScreen() {
   const runAnalysis = useCallback(async (imageUri: string) => {
     setLoading(true);
     setError(null);
+    resetProgress();
+    setProgressStage(es ? 'Preparando la imagen...' : 'Preparing image...');
+    animateProgressTo(0.12, 500);
     console.log('[Analyze] Starting schematic analysis', { imageUri });
 
     try {
       console.log('[Analyze] Preparing image for upload');
       const base64 = await prepareImageForAI(imageUri);
 
+      setProgressStage(es ? 'Leyendo el esquema con la AI...' : 'Reading the schematic with AI...');
+      // Real checkpoint, then a slow creep to 90% while the model works
+      animateProgressTo(0.35, 400);
+      setTimeout(() => animateProgressTo(0.9, 30000), 400);
+
       console.log('[Analyze] Calling OpenRouter analyzeSchematic');
       const result: AnalysisResult = await analyzeSchematic(base64);
+
+      setProgressStage(es ? 'Guardando resultados...' : 'Saving results...');
+      animateProgressTo(0.95, 300);
 
       const newSchematic: SchematicAnalysis = {
         id: `sch_${Date.now()}`,
@@ -341,27 +446,50 @@ export default function AnalyzeScreen() {
 
       await saveSchematic(newSchematic);
       setSchematic(newSchematic);
+      animateProgressTo(1, 250);
       console.log('[Analyze] Analysis complete', { id: newSchematic.id, wires: newSchematic.wireCount });
     } catch (e) {
       const msg = e instanceof Error ? e.message : es ? 'El análisis falló' : 'Analysis failed';
       console.error('[Analyze] Analysis error', e);
       setError(msg);
+      resetProgress();
     } finally {
       setLoading(false);
+      setProgressStage(null);
     }
-  }, [es]);
+  }, [es, animateProgressTo, resetProgress]);
 
   const runMultiAnalysis = useCallback(async (imageUris: string[]) => {
     setLoading(true);
     setError(null);
+    resetProgress();
+    setProgressStage(
+      es ? `Preparando ${imageUris.length} páginas...` : `Preparing ${imageUris.length} pages...`
+    );
+    animateProgressTo(0.05, 400);
     console.log('[Analyze] Starting multi-page analysis', { pageCount: imageUris.length });
 
     try {
       console.log('[Analyze] Preparing images for upload');
-      const base64Images = await Promise.all(imageUris.map((uri) => prepareImageForAI(uri)));
+      // Each page that finishes resizing is real progress worth showing
+      let prepared = 0;
+      const base64Images = await Promise.all(
+        imageUris.map(async (uri) => {
+          const b64 = await prepareImageForAI(uri);
+          prepared += 1;
+          animateProgressTo(0.05 + (0.3 * prepared) / imageUris.length, 300);
+          return b64;
+        })
+      );
+
+      setProgressStage(es ? 'Leyendo las páginas con la AI...' : 'Reading the pages with AI...');
+      setTimeout(() => animateProgressTo(0.9, 40000), 300);
 
       console.log('[Analyze] Calling OpenRouter analyzeMultipleImages');
       const result: AnalysisResult = await analyzeMultipleImages(base64Images);
+
+      setProgressStage(es ? 'Guardando resultados...' : 'Saving results...');
+      animateProgressTo(0.95, 300);
 
       const newSchematic: SchematicAnalysis = {
         id: `sch_${Date.now()}`,
@@ -381,15 +509,18 @@ export default function AnalyzeScreen() {
 
       await saveSchematic(newSchematic);
       setSchematic(newSchematic);
+      animateProgressTo(1, 250);
       console.log('[Analyze] Multi-page analysis complete', { id: newSchematic.id, wires: newSchematic.wireCount });
     } catch (e) {
       const msg = e instanceof Error ? e.message : es ? 'El análisis falló' : 'Analysis failed';
       console.error('[Analyze] Multi-page analysis error', e);
       setError(msg);
+      resetProgress();
     } finally {
       setLoading(false);
+      setProgressStage(null);
     }
-  }, [es]);
+  }, [es, animateProgressTo, resetProgress]);
 
   useEffect(() => {
     if (params.schematicId) {
@@ -444,6 +575,9 @@ export default function AnalyzeScreen() {
       }
 
       setGeneratingSteps(true);
+      resetStepsProgress();
+      animateStepsProgressTo(0.15, 400);
+      setTimeout(() => animateStepsProgressTo(0.9, 20000), 400);
       console.log('[Analyze] Generating custom-order reading steps', { count: orderedLabels.length });
       try {
         const steps = await generateCustomOrderReadingSteps(
@@ -464,6 +598,7 @@ export default function AnalyzeScreen() {
         };
         await saveSchematic(updated);
         setSchematic(updated);
+        animateStepsProgressTo(1, 250);
         router.push({
           pathname: '/reader',
           params: { schematicId: updated.id, direction: 'forward', startLabel: orderedLabels[0] },
@@ -472,6 +607,7 @@ export default function AnalyzeScreen() {
         const msg = e instanceof Error ? e.message : es ? 'No se pudieron generar los pasos' : 'Failed to generate steps';
         console.error('[Analyze] Custom-order step generation error', e);
         setError(msg);
+        resetStepsProgress();
       } finally {
         setGeneratingSteps(false);
       }
@@ -509,6 +645,9 @@ export default function AnalyzeScreen() {
     }
 
     setGeneratingSteps(true);
+    resetStepsProgress();
+    animateStepsProgressTo(0.15, 400);
+    setTimeout(() => animateStepsProgressTo(0.9, 20000), 400);
     console.log('[Analyze] Generating reading steps via OpenRouter');
     try {
       const { steps, pendingChoice } = await generateReadingSteps(
@@ -533,6 +672,7 @@ export default function AnalyzeScreen() {
       };
       await saveSchematic(updated);
       setSchematic(updated);
+      animateStepsProgressTo(1, 250);
 
       router.push({
         pathname: '/reader',
@@ -542,6 +682,7 @@ export default function AnalyzeScreen() {
       const msg = e instanceof Error ? e.message : es ? 'No se pudieron generar los pasos' : 'Failed to generate steps';
       console.error('[Analyze] Step generation error', e);
       setError(msg);
+      resetStepsProgress();
     } finally {
       setGeneratingSteps(false);
     }
@@ -1189,6 +1330,8 @@ export default function AnalyzeScreen() {
             </Animated.View>
             <Text style={styles.loadingTitle}>{es ? 'Analizando esquema...' : 'Analyzing schematic...'}</Text>
             <Text style={styles.loadingSubtitle}>{es ? 'La AI está extrayendo cables, componentes y conexiones' : 'AI is extracting wires, components, and connections'}</Text>
+            <AnalysisProgressBar progress={progressAnim} />
+            {progressStage ? <Text style={styles.progressStageText}>{progressStage}</Text> : null}
             <Text style={styles.loadingProviderText}>{es ? 'Proveedor AI activo: ' : 'Active AI Provider: '}{activeVisionProviderLabel}</Text>
             <View style={{ gap: 12, marginTop: 8 }}>
               <SkeletonCard />
@@ -1883,6 +2026,11 @@ export default function AnalyzeScreen() {
       {/* Start Reading button */}
       {schematic && !loading && (
         <View style={[styles.bottomBar, { paddingBottom: insets.bottom + 16 }]}>
+          {generatingSteps ? (
+            <View style={{ marginBottom: 10 }}>
+              <AnalysisProgressBar progress={stepsProgressAnim} />
+            </View>
+          ) : null}
           <AnimatedPressable
             onPress={handleStartReading}
             style={styles.startBtn}
@@ -2060,6 +2208,46 @@ const styles = StyleSheet.create({
   loadingProviderText: {
     fontSize: 12,
     color: WT.blue,
+    fontWeight: '600',
+  },
+  progressTrack: {
+    width: '100%',
+    height: 16,
+    borderRadius: 8,
+    backgroundColor: WT.blueMuted,
+    borderWidth: 1,
+    borderColor: WT.blueDim,
+    overflow: 'hidden',
+    marginTop: 8,
+    justifyContent: 'center',
+  },
+  progressGlow: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: WT.blue,
+  },
+  progressFill: {
+    height: '100%',
+    borderRadius: 8,
+    backgroundColor: WT.pink,
+    flexDirection: 'row',
+    justifyContent: 'flex-end',
+    alignItems: 'center',
+    shadowColor: WT.pink,
+    shadowOpacity: 0.9,
+    shadowRadius: 6,
+    shadowOffset: { width: 0, height: 0 },
+    elevation: 4,
+  },
+  progressTip: {
+    width: 16,
+    height: '100%',
+    borderTopRightRadius: 8,
+    borderBottomRightRadius: 8,
+    backgroundColor: WT.pinkBright,
+  },
+  progressStageText: {
+    fontSize: 12,
+    color: WT.pink,
     fontWeight: '600',
   },
   errorCard: {

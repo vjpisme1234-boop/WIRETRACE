@@ -15,6 +15,7 @@ import { ArrowLeft, CheckCircle, Info, Key, Mic, Minimize2, Zap } from 'lucide-r
 import { WT, STORAGE_KEYS } from '@/constants/wiretrace';
 import { loadTTSSettings, saveTTSSettings, speakTextWithSettings, stopSpeech, TTSSettings } from '@/utils/tts';
 import { DEFAULT_UI_PREFERENCES, LayoutPreset, loadUIPreferences, ReadingStyle, saveUIPreferences, UIPreferences, VisualMode, VisionProviderPreference } from '@/utils/ui-preferences';
+import { FREE_SCAN_LIMIT, getFreeScanCount } from '@/utils/free-scan-limit';
 import PulsingLogo from '@/components/PulsingLogo';
 
 function AnimatedPressable({
@@ -146,6 +147,7 @@ export default function SettingsScreen() {
     language: 'english',
   });
   const [uiPrefs, setUiPrefs] = useState<UIPreferences>(DEFAULT_UI_PREFERENCES);
+  const [freeScansUsed, setFreeScansUsed] = useState<number | null>(null);
   const [saved, setSaved] = useState(false);
   const [testingVoice, setTestingVoice] = useState(false);
   const hadAnyPaidKeyRef = useRef(false);
@@ -154,13 +156,15 @@ export default function SettingsScreen() {
     const load = async () => {
       console.log('[Settings] Loading settings');
       try {
-        const [storedKey, storedOpenAIKey, storedAnthropicKey, ttsSettings, storedUiPrefs] = await Promise.all([
+        const [storedKey, storedOpenAIKey, storedAnthropicKey, ttsSettings, storedUiPrefs, scansUsed] = await Promise.all([
           SecureStore.getItemAsync(STORAGE_KEYS.API_KEY),
           SecureStore.getItemAsync(STORAGE_KEYS.OPENAI_API_KEY),
           SecureStore.getItemAsync(STORAGE_KEYS.ANTHROPIC_API_KEY),
           loadTTSSettings(),
           loadUIPreferences(),
+          getFreeScanCount(),
         ]);
+        setFreeScansUsed(scansUsed);
         if (storedKey) setApiKey(storedKey);
         if (storedOpenAIKey) setOpenAIApiKey(storedOpenAIKey);
         if (storedAnthropicKey) setAnthropicApiKey(storedAnthropicKey);
@@ -224,6 +228,11 @@ export default function SettingsScreen() {
 
   const es = settings.language === 'spanish';
 
+  // The free allowance only applies to the built-in key, so a user who has
+  // supplied any of their own keys is never metered.
+  const hasOwnKey = !!(apiKey.trim() || openAIApiKey.trim() || anthropicApiKey.trim());
+  const freeScansExhausted = freeScansUsed !== null && freeScansUsed >= FREE_SCAN_LIMIT;
+
   const handleTestVoice = async () => {
     if (testingVoice) {
       await stopSpeech();
@@ -270,15 +279,46 @@ export default function SettingsScreen() {
         contentContainerStyle={[styles.scrollContent, { paddingBottom: insets.bottom + 40 }]}
         showsVerticalScrollIndicator={false}
       >
-        {/* Free AI banner */}
-        <View style={styles.freeAiBanner}>
-          <Zap size={18} color={WT.green} fill={WT.green} />
-          <Text style={styles.freeAiBannerText}>
-            {es
-              ? 'WireTrace AI funciona de inmediato con una AI integrada (Google Gemini) — no requiere configuración. También puedes agregar tu propia clave de Claude, OpenRouter u OpenAI abajo si lo prefieres.'
-              : "WireTrace AI works out of the box with a built-in AI (Google Gemini) — no setup required. You can also add your own Claude, OpenRouter, or OpenAI key below if you'd rather use one of those."}
-          </Text>
-        </View>
+        {/* Free AI banner — also the free-scan meter, so the allowance is
+            visible while it still matters rather than only once it runs out.
+            Keys are read from state, so this reflects unsaved edits too. */}
+        {hasOwnKey ? (
+          <View style={styles.freeAiBanner}>
+            <Zap size={18} color={WT.green} fill={WT.green} />
+            <Text style={styles.freeAiBannerText}>
+              {es
+                ? 'Estás usando tu propia clave API, así que no hay límite de escaneos. La AI gratis integrada solo se usa si tu clave falla.'
+                : 'You are using your own API key, so there is no scan limit. The free built-in AI is only used if your key fails.'}
+            </Text>
+          </View>
+        ) : freeScansExhausted ? (
+          <View style={styles.freeAiBannerSpent}>
+            <Key size={18} color={WT.red} />
+            <Text style={styles.freeAiBannerText}>
+              {es
+                ? `Usaste los ${FREE_SCAN_LIMIT} escaneos gratis de esta instalación. Agrega tu propia clave de Claude, OpenRouter u OpenAI abajo para seguir escaneando.`
+                : `You have used all ${FREE_SCAN_LIMIT} free scans on this install. Add your own Claude, OpenRouter, or OpenAI key below to keep scanning.`}
+            </Text>
+          </View>
+        ) : (
+          <View style={styles.freeAiBanner}>
+            <Zap size={18} color={WT.green} fill={WT.green} />
+            <View style={{ flex: 1 }}>
+              <Text style={styles.freeAiBannerText}>
+                {es
+                  ? 'WireTrace AI funciona de inmediato con una AI integrada (Google Gemini) — no requiere configuración.'
+                  : 'WireTrace AI works out of the box with a built-in AI (Google Gemini) — no setup required.'}
+              </Text>
+              {freeScansUsed !== null ? (
+                <Text style={styles.freeScanMeterText}>
+                  {es
+                    ? `${freeScansUsed} de ${FREE_SCAN_LIMIT} escaneos gratis usados. Después, agrega tu propia clave abajo para seguir escaneando.`
+                    : `${freeScansUsed} of ${FREE_SCAN_LIMIT} free scans used. After that, add your own key below to keep scanning.`}
+                </Text>
+              ) : null}
+            </View>
+          </View>
+        )}
 
         {/* Anthropic API Key — recommended, shown first */}
         <View style={styles.section}>
@@ -306,8 +346,8 @@ export default function SettingsScreen() {
           />
           <Text style={styles.fieldHint}>
             {es
-              ? 'Recomendado: Claude Sonnet. A menudo la más precisa siguiendo instrucciones detalladas al leer esquemas técnicos.'
-              : 'Recommended: Claude Sonnet. Often the most accurate at following detailed instructions when reading technical schematics.'}
+              ? 'Recomendado: Claude Sonnet 5. Es la primera AI que prueba Auto y sigue bien instrucciones detalladas al leer esquemas técnicos.'
+              : 'Recommended: Claude Sonnet 5. This is the first AI Auto tries, and it follows detailed instructions well when reading technical schematics.'}
           </Text>
           <Text style={styles.fieldHint}>
             {es
@@ -339,8 +379,8 @@ export default function SettingsScreen() {
           />
           <Text style={styles.fieldHint}>
             {es
-              ? 'Acceso flexible a Gemini, Claude, GPT y más con una sola clave. Pago por uso.'
-              : 'Flexible access to Gemini, Claude, GPT, and more through one key. Pay-as-you-go.'}
+              ? 'Acceso flexible a Gemini, Claude, GPT y más con una sola clave. Pago por uso. Auto la usa después de Claude Sonnet 5 y GPT-4o.'
+              : 'Flexible access to Gemini, Claude, GPT, and more through one key. Pay-as-you-go. Auto uses it after Claude Sonnet 5 and GPT-4o.'}
           </Text>
           <Text style={styles.fieldHint}>
             {es
@@ -543,14 +583,14 @@ export default function SettingsScreen() {
             }}
             labels={
               es
-                ? { all: 'Auto', anthropic: 'Claude', openrouter: 'OpenRouter', openai: 'OpenAI', gemini: 'Gemini (gratis)' }
-                : { all: 'Auto', anthropic: 'Claude', openrouter: 'OpenRouter', openai: 'OpenAI', gemini: 'Gemini (free)' }
+                ? { all: 'Auto', anthropic: 'Sonnet 5', openrouter: 'OpenRouter', openai: 'GPT-4o', gemini: 'Gemini (gratis)' }
+                : { all: 'Auto', anthropic: 'Sonnet 5', openrouter: 'OpenRouter', openai: 'GPT-4o', gemini: 'Gemini (free)' }
             }
           />
           <Text style={styles.fieldHint}>
             {es
-              ? 'Auto prueba tus claves pagadas primero (Claude, luego las demás) y usa Gemini gratis como respaldo. Un solo proveedor fuerza solo esa AI.'
-              : 'Auto tries your paid keys first (Claude, then the others) and uses free Gemini as a fallback. Single provider forces only that AI.'}
+              ? 'Auto prueba primero Claude Sonnet 5, luego GPT-4o, luego OpenRouter, y usa el Gemini gratis integrado como respaldo. Un solo proveedor fuerza solo esa AI.'
+              : 'Auto tries Claude Sonnet 5 first, then GPT-4o, then OpenRouter, then falls back to the free built-in Gemini. Single provider forces only that AI.'}
           </Text>
         </View>
 
@@ -641,8 +681,12 @@ export default function SettingsScreen() {
             </Text>
             <View style={styles.aboutDivider} />
             <Text style={styles.aboutModel}>
-              {es ? 'Modelo AI: ' : 'AI Model: '}
-              <Text style={styles.aboutModelName}>Claude Sonnet, OpenRouter, OpenAI, and Google Gemini</Text>
+              {es ? 'Modelos AI: ' : 'AI Models: '}
+              <Text style={styles.aboutModelName}>
+                {es
+                  ? 'Claude Sonnet 5, OpenAI GPT-4o, OpenRouter y Google Gemini'
+                  : 'Claude Sonnet 5, OpenAI GPT-4o, OpenRouter, and Google Gemini'}
+              </Text>
             </Text>
             <Text style={styles.aboutPowered}>{es ? 'Impulsado por múltiples proveedores de visión' : 'Powered by multiple vision providers'}</Text>
           </View>
@@ -720,6 +764,22 @@ const styles = StyleSheet.create({
     padding: 14,
     borderWidth: 1,
     borderColor: 'rgba(52,199,89,0.25)',
+  },
+  freeAiBannerSpent: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 10,
+    backgroundColor: WT.redMuted,
+    borderRadius: 12,
+    padding: 14,
+    borderWidth: 1,
+    borderColor: 'rgba(255,59,48,0.3)',
+  },
+  freeScanMeterText: {
+    fontSize: 12,
+    color: WT.textSecondary,
+    lineHeight: 17,
+    marginTop: 6,
   },
   freeAiBannerText: {
     flex: 1,

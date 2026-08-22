@@ -14,8 +14,20 @@ import {
 import { validateAnalysisConsistency } from '@/utils/schematic-validation';
 import { salvagePartialAnalysis, salvagePartialReadingSteps } from '@/utils/partial-json';
 
-const OPENAI_MODEL = process.env.EXPO_PUBLIC_OPENAI_MODEL || 'gpt-4o-mini';
+// gpt-4o, not gpt-4o-mini: OpenAI is the rung that has to carry a scan when
+// Anthropic is down, and mini is the weakest vision model of the family — as a
+// fallback it was quietly downgrading the read rather than rescuing it.
+const OPENAI_MODEL = process.env.EXPO_PUBLIC_OPENAI_MODEL || 'gpt-4o';
 const ANTHROPIC_MODEL = process.env.EXPO_PUBLIC_ANTHROPIC_MODEL || 'claude-sonnet-5';
+
+// Optional second Anthropic rung, off unless an operator sets it. Sonnet is the
+// shipped default because customers bring their own keys and Opus is ~2.5x the
+// cost per scan — nobody should pay for it by accident. An operator who does
+// want Opus sets EXPO_PUBLIC_ANTHROPIC_MODEL=claude-opus-5 and can then name a
+// cheaper model here (typically claude-sonnet-5) to catch the case where Opus
+// itself is refusing or overloaded. Empty means the chain has exactly one
+// Anthropic attempt, which is the behavior every existing install already has.
+const ANTHROPIC_FALLBACK_MODEL = (process.env.EXPO_PUBLIC_ANTHROPIC_MODEL_FALLBACK || '').trim();
 // The entire Gemini 2.5 family (gemini-2.5-pro AND gemini-2.5-flash) is
 // blocked for this account's key with "no longer available to new users" —
 // confirmed by calling the API directly, not assumed. gemini-3.1-pro is
@@ -162,7 +174,13 @@ function toAnthropicContent(content: ChatMessage['content']): any {
   });
 }
 
-async function callAnthropic(messages: ChatMessage[], maxTokens = 2048): Promise<string> {
+// `model` is threaded in from the attempt rather than read off module scope so
+// the same provider can appear twice in the chain with two different models.
+async function callAnthropic(
+  messages: ChatMessage[],
+  maxTokens = 2048,
+  model: string = ANTHROPIC_MODEL
+): Promise<string> {
   const apiKey = await getAnthropicKey();
   if (!apiKey) throw new Error('Anthropic key is not configured.');
 
@@ -171,7 +189,7 @@ async function callAnthropic(messages: ChatMessage[], maxTokens = 2048): Promise
     .filter((m) => m.role !== 'system')
     .map((m) => ({ role: m.role, content: toAnthropicContent(m.content) }));
 
-  console.log('[Anthropic] Making API request', { model: ANTHROPIC_MODEL, messageCount: conversation.length });
+  console.log('[Anthropic] Making API request', { model, messageCount: conversation.length });
 
   const response = await fetch('https://api.anthropic.com/v1/messages', {
     method: 'POST',
@@ -181,7 +199,7 @@ async function callAnthropic(messages: ChatMessage[], maxTokens = 2048): Promise
       'content-type': 'application/json',
     },
     body: JSON.stringify({
-      model: ANTHROPIC_MODEL,
+      model,
       max_tokens: maxTokens,
       ...(systemMessage ? { system: systemMessage.content } : {}),
       messages: conversation,
@@ -216,10 +234,18 @@ function visionMessages(imageUrl: string, prompt: string, systemPrompt?: string)
 
 type ProviderName = 'anthropic' | 'openrouter' | 'openai' | 'gemini';
 
+// One rung of the fallback chain. A rung is a provider *and* a model, not just
+// a provider, so the same provider can legitimately appear more than once.
+interface ProviderAttempt {
+  name: ProviderName;
+  model: string;
+  run: () => Promise<string>;
+}
+
 async function buildProviderAttempts(
   selectedProvider: string,
-  run: (provider: ProviderName) => Promise<string>
-): Promise<{ name: ProviderName; run: () => Promise<string> }[]> {
+  run: (provider: ProviderName, model: string) => Promise<string>
+): Promise<ProviderAttempt[]> {
   const [anthropicKey, openRouterKey, openAIKey, geminiKey] = await Promise.all([
     getAnthropicKey(),
     getApiKey(),
@@ -227,25 +253,51 @@ async function buildProviderAttempts(
     getGeminiKey(),
   ]);
 
-  // Gemini (the free baked-in default) is listed last so paid keys are
-  // preferred automatically when present, with Gemini as the guaranteed
-  // floor — this is also what lets the app work out of the box for a fresh
-  // install or an app-store reviewer with no keys configured.
-  const candidates: { name: ProviderName; key: string }[] = [
-    { name: 'anthropic', key: anthropicKey },
-    { name: 'openrouter', key: openRouterKey },
-    { name: 'openai', key: openAIKey },
-    { name: 'gemini', key: geminiKey },
+  // Ordered for accuracy first, then for surviving an outage. Anthropic reads
+  // schematics best, so it leads. OpenAI is second precisely because it is a
+  // different vendor — if Anthropic is down, this is the rung that still
+  // answers. OpenRouter sits below it despite being a paid key, because it is
+  // now routed to an Anthropic model too and would go down in the same outage.
+  // Gemini (the free baked-in default) stays last as the guaranteed floor —
+  // that is what lets the app work out of the box for a fresh install or an
+  // app-store reviewer with no keys configured.
+  const candidates: { name: ProviderName; model: string; key: string }[] = [
+    { name: 'anthropic', model: ANTHROPIC_MODEL, key: anthropicKey },
+    // Present only when the operator opted in; see ANTHROPIC_FALLBACK_MODEL.
+    ...(ANTHROPIC_FALLBACK_MODEL
+      ? [{ name: 'anthropic' as ProviderName, model: ANTHROPIC_FALLBACK_MODEL, key: anthropicKey }]
+      : []),
+    { name: 'openai', model: OPENAI_MODEL, key: openAIKey },
+    { name: 'openrouter', model: OPENROUTER_MODEL, key: openRouterKey },
+    { name: 'gemini', model: GEMINI_MODEL, key: geminiKey },
   ];
 
+  // Filtering still keys off the provider name alone, so picking "anthropic"
+  // in Settings yields every configured Anthropic rung rather than just one.
   return candidates
     .filter((c) => (selectedProvider === 'all' || selectedProvider === c.name) && c.key)
-    .map((c) => ({ name: c.name, run: () => run(c.name) }));
+    .map((c) => ({ name: c.name, model: c.model, run: () => run(c.name, c.model) }));
+}
+
+// Errors raised because the built-in free allowance is used up are tagged
+// rather than matched on their text, so the wording can change freely. A
+// property beats subclassing Error here — `instanceof` on an Error subclass is
+// unreliable once the code is transpiled.
+type TaggedError = Error & { isFreeAllowance?: boolean };
+
+function freeAllowanceError(message: string): Error {
+  const error: TaggedError = new Error(message);
+  error.isFreeAllowance = true;
+  return error;
+}
+
+function isFreeAllowanceError(error: unknown): boolean {
+  return error instanceof Error && (error as TaggedError).isFreeAllowance === true;
 }
 
 async function runWithFallback(
   selectedProvider: string,
-  run: (provider: ProviderName) => Promise<string>,
+  run: (provider: ProviderName, model: string) => Promise<string>,
   noKeyHint: string
 ): Promise<string> {
   const attempts = await buildProviderAttempts(selectedProvider, run);
@@ -261,14 +313,26 @@ async function runWithFallback(
   const errors: string[] = [];
   for (const attempt of attempts) {
     try {
-      console.log('[AI] Attempting provider', { provider: attempt.name });
+      console.log('[AI] Attempting provider', { provider: attempt.name, model: attempt.model });
       return await attempt.run();
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      console.error('[AI] Provider failed', { provider: attempt.name, message });
-      errors.push(`${attempt.name}: ${message}`);
+      console.error('[AI] Provider failed', { provider: attempt.name, model: attempt.model, message });
+      // Hitting the free allowance isn't a failure the user can act on by
+      // retrying — the message already tells them exactly what to do, so it
+      // goes back untouched rather than buried behind "All AI providers
+      // failed" and an internal model id. On a keyless install this is the
+      // most common error the app shows, and it is the one that sells a key.
+      if (isFreeAllowanceError(error)) throw error;
+      // The model goes in the clause too: two Anthropic rungs would otherwise
+      // produce two indistinguishable lines in the aggregated failure message.
+      errors.push(`${attempt.name} (${attempt.model}): ${message}`);
     }
   }
+
+  // One configured provider means there was no fallback to speak of; the
+  // plural aggregate would overstate what was actually tried.
+  if (errors.length === 1) throw new Error(errors[0]);
 
   throw new Error(`All AI providers failed. ${errors.join(' | ')}`);
 }
@@ -276,7 +340,7 @@ async function runWithFallback(
 async function callGeminiWithFreeScanLimit(messages: ChatMessage[], maxTokens: number): Promise<string> {
   const remaining = await getRemainingFreeScans();
   if (remaining <= 0) {
-    throw new Error(
+    throw freeAllowanceError(
       `You've used all ${FREE_SCAN_LIMIT} free scans on the built-in AI for this install. Add your own Anthropic, OpenRouter, or OpenAI key in Settings to keep scanning.`
     );
   }
@@ -288,7 +352,7 @@ async function callGeminiWithFreeScanLimit(messages: ChatMessage[], maxTokens: n
 async function callGeminiWithTextGenerationLimit(messages: ChatMessage[], maxTokens: number): Promise<string> {
   const remaining = await getRemainingFreeTextGenerations();
   if (remaining <= 0) {
-    throw new Error(
+    throw freeAllowanceError(
       `You've used all ${FREE_TEXT_GENERATION_LIMIT} free AI requests on the built-in AI for this install. Add your own Anthropic, OpenRouter, or OpenAI key in Settings to keep going.`
     );
   }
@@ -301,9 +365,9 @@ async function callVisionWithFallback(imageUrl: string, prompt: string, systemPr
   const uiPrefs = await loadUIPreferences();
   return runWithFallback(
     uiPrefs.visionProvider,
-    (provider) => {
+    (provider, model) => {
       const messages = visionMessages(imageUrl, prompt, systemPrompt);
-      if (provider === 'anthropic') return callAnthropic(messages, 4096);
+      if (provider === 'anthropic') return callAnthropic(messages, 4096, model);
       if (provider === 'openrouter') return callOpenRouter(messages, 4096);
       if (provider === 'openai') return callOpenAI(messages, 4096);
       return callGeminiWithFreeScanLimit(messages, 4096);
@@ -327,9 +391,9 @@ async function callMultiVisionWithFallback(imageUrls: string[], prompt: string, 
   const uiPrefs = await loadUIPreferences();
   return runWithFallback(
     uiPrefs.visionProvider,
-    (provider) => {
+    (provider, model) => {
       const messages = visionMessagesMulti(imageUrls, prompt, systemPrompt);
-      if (provider === 'anthropic') return callAnthropic(messages, maxTokens);
+      if (provider === 'anthropic') return callAnthropic(messages, maxTokens, model);
       if (provider === 'openrouter') return callOpenRouter(messages, maxTokens);
       if (provider === 'openai') return callOpenAI(messages, maxTokens);
       return callGeminiWithFreeScanLimit(messages, maxTokens);
@@ -342,8 +406,8 @@ async function callTextWithFallback(messages: ChatMessage[], maxTokens: number):
   const uiPrefs = await loadUIPreferences();
   return runWithFallback(
     uiPrefs.visionProvider,
-    (provider) => {
-      if (provider === 'anthropic') return callAnthropic(messages, maxTokens);
+    (provider, model) => {
+      if (provider === 'anthropic') return callAnthropic(messages, maxTokens, model);
       if (provider === 'openrouter') return callOpenRouter(messages, maxTokens);
       if (provider === 'openai') return callOpenAI(messages, maxTokens);
       return callGeminiWithTextGenerationLimit(messages, maxTokens);

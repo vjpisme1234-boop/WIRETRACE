@@ -1,6 +1,13 @@
 // WireTrace AI — App Constants
 
-export const OPENROUTER_MODEL = 'google/gemini-2.5-flash';
+// Rungs are filtered by which keys exist, not by which earlier rung failed, so
+// "below Anthropic in the list" does NOT mean "only runs after Anthropic fails":
+// a user whose only paid key is OpenRouter has this as their FIRST call on every
+// scan. That is why it defaults to Sonnet 5 rather than Opus 5 — nobody should
+// land on the expensive model by accident. Verified against the live OpenRouter
+// catalog; set EXPO_PUBLIC_OPENROUTER_MODEL to 'anthropic/claude-opus-5' to opt
+// in to the strongest reader, or 'google/gemini-3.1-pro-preview' for a cheaper one.
+export const OPENROUTER_MODEL = process.env.EXPO_PUBLIC_OPENROUTER_MODEL || 'anthropic/claude-sonnet-5';
 export const OPENROUTER_BASE_URL = 'https://openrouter.ai/api/v1';
 
 export const STORAGE_KEYS = {
@@ -11,6 +18,7 @@ export const STORAGE_KEYS = {
   SETTINGS: 'wiretrace_settings',
   UI_PREFS: 'wiretrace_ui_prefs',
   FREE_SCAN_COUNT: 'wiretrace_free_scan_count',
+  FREE_CAP_EPOCH: 'wiretrace_free_cap_epoch',
   FREE_TEXT_GENERATION_COUNT: 'wiretrace_free_text_generation_count',
 } as const;
 

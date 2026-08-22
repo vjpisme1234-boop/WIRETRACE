@@ -2,12 +2,15 @@ import { Image } from 'react-native';
 import * as FileSystem from 'expo-file-system/legacy';
 import { ImageManipulator, SaveFormat } from 'expo-image-manipulator';
 
-// Vision models cap their effective input resolution well below a modern
-// phone camera's native output (often 3000-4000px on the long side) — a
-// bigger upload doesn't improve OCR accuracy on wire/terminal labels past
-// this point, it just costs more image tokens and takes longer to upload.
-const MAX_DIMENSION = 2000;
-const JPEG_QUALITY = 0.85;
+// 2576px is the long-edge maximum for the current high-resolution vision
+// tier, so anything larger is wasted upload — the model just downsamples it
+// back to this size on its end, and we pay the extra bytes and upload time
+// for nothing. Photographed schematics are dense line art with small printed
+// wire numbers, so we do want every pixel up to that ceiling: an image at
+// this size costs roughly 4800 image tokens, which is worth it when the
+// alternative is unreadable text.
+const MAX_DIMENSION = 2576;
+const JPEG_QUALITY = 0.92;
 
 function getImageSize(uri: string): Promise<{ width: number; height: number }> {
   return new Promise((resolve, reject) => {

@@ -1227,16 +1227,16 @@ export default function AnalyzeScreen() {
   const isLightMode = uiPrefs.visualMode === 'normalLight';
   const activeVisionProviderLabel =
     uiPrefs.visionProvider === 'anthropic'
-      ? 'Claude'
+      ? 'Claude Sonnet 5'
       : uiPrefs.visionProvider === 'openrouter'
       ? 'OpenRouter'
       : uiPrefs.visionProvider === 'openai'
-      ? 'OpenAI'
+      ? 'GPT-4o'
       : uiPrefs.visionProvider === 'gemini'
       ? 'Gemini'
       : es
-      ? 'Automático (Claude → OpenRouter → OpenAI → Gemini)'
-      : 'Auto (Claude → OpenRouter → OpenAI → Gemini)';
+      ? 'Automático (Claude Sonnet 5 → GPT-4o → OpenRouter → Gemini)'
+      : 'Auto (Claude Sonnet 5 → GPT-4o → OpenRouter → Gemini)';
   const wireDisplayLimit = uiPrefs.layoutPreset === 'residential' ? 5 : uiPrefs.layoutPreset === 'commercial' ? 10 : 8;
   const connectionDisplayLimit = uiPrefs.layoutPreset === 'residential' ? 4 : uiPrefs.layoutPreset === 'commercial' ? 8 : 6;
 

@@ -32,7 +32,7 @@ module.exports = {
         backgroundColor: "#FFFFFF",
       },
       package: "com.vjpisme_wiretrace",
-      versionCode: 8,
+      versionCode: 9,
       permissions: [
         "android.permission.CAMERA",
         "android.permission.READ_MEDIA_IMAGES",

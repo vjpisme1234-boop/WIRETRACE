@@ -139,6 +139,7 @@ export default function SettingsScreen() {
   const insets = useSafeAreaInsets();
   const [apiKey, setApiKey] = useState('');
   const [openAIApiKey, setOpenAIApiKey] = useState('');
+  const [geminiApiKey, setGeminiApiKey] = useState('');
   const [anthropicApiKey, setAnthropicApiKey] = useState('');
   const [settings, setSettings] = useState<TTSSettings>({
     speed: 'normal',
@@ -156,9 +157,10 @@ export default function SettingsScreen() {
     const load = async () => {
       console.log('[Settings] Loading settings');
       try {
-        const [storedKey, storedOpenAIKey, storedAnthropicKey, ttsSettings, storedUiPrefs, scansUsed] = await Promise.all([
+        const [storedKey, storedOpenAIKey, storedGeminiKey, storedAnthropicKey, ttsSettings, storedUiPrefs, scansUsed] = await Promise.all([
           SecureStore.getItemAsync(STORAGE_KEYS.API_KEY),
           SecureStore.getItemAsync(STORAGE_KEYS.OPENAI_API_KEY),
+          SecureStore.getItemAsync(STORAGE_KEYS.GEMINI_API_KEY),
           SecureStore.getItemAsync(STORAGE_KEYS.ANTHROPIC_API_KEY),
           loadTTSSettings(),
           loadUIPreferences(),
@@ -167,6 +169,7 @@ export default function SettingsScreen() {
         setFreeScansUsed(scansUsed);
         if (storedKey) setApiKey(storedKey);
         if (storedOpenAIKey) setOpenAIApiKey(storedOpenAIKey);
+        if (storedGeminiKey) setGeminiApiKey(storedGeminiKey);
         if (storedAnthropicKey) setAnthropicApiKey(storedAnthropicKey);
         hadAnyPaidKeyRef.current = !!(storedKey || storedOpenAIKey || storedAnthropicKey);
         setSettings(ttsSettings);
@@ -183,6 +186,7 @@ export default function SettingsScreen() {
     try {
       const openRouterKey = apiKey.trim();
       const openAIKey = openAIApiKey.trim();
+      const geminiKey = geminiApiKey.trim();
       const anthropicKey = anthropicApiKey.trim();
       const hasAnyPaidKeyNow = !!(openRouterKey || openAIKey || anthropicKey);
 
@@ -204,6 +208,9 @@ export default function SettingsScreen() {
         openAIKey
           ? SecureStore.setItemAsync(STORAGE_KEYS.OPENAI_API_KEY, openAIKey)
           : SecureStore.deleteItemAsync(STORAGE_KEYS.OPENAI_API_KEY),
+        geminiKey
+          ? SecureStore.setItemAsync(STORAGE_KEYS.GEMINI_API_KEY, geminiKey)
+          : SecureStore.deleteItemAsync(STORAGE_KEYS.GEMINI_API_KEY),
         anthropicKey
           ? SecureStore.setItemAsync(STORAGE_KEYS.ANTHROPIC_API_KEY, anthropicKey)
           : SecureStore.deleteItemAsync(STORAGE_KEYS.ANTHROPIC_API_KEY),
@@ -230,7 +237,9 @@ export default function SettingsScreen() {
 
   // The free allowance only applies to the built-in key, so a user who has
   // supplied any of their own keys is never metered.
-  const hasOwnKey = !!(apiKey.trim() || openAIApiKey.trim() || anthropicApiKey.trim());
+  // A user-supplied Gemini key is billed to the customer too, so it lifts the
+  // free-scan cap exactly like the paid keys do.
+  const hasOwnKey = !!(apiKey.trim() || openAIApiKey.trim() || anthropicApiKey.trim() || geminiApiKey.trim());
   const freeScansExhausted = freeScansUsed !== null && freeScansUsed >= FREE_SCAN_LIMIT;
 
   const handleTestVoice = async () => {
@@ -419,6 +428,39 @@ export default function SettingsScreen() {
             {es
               ? '1) Ve a platform.openai.com y crea una cuenta.  2) Ve a Settings → Billing y agrega un método de pago.  3) Ve a API Keys y crea una nueva clave.  4) Pega la clave arriba y toca Guardar.'
               : '1) Go to platform.openai.com and create an account.  2) Go to Settings → Billing and add a payment method.  3) Go to API Keys and create a new key.  4) Paste the key above and tap Save.'}
+          </Text>
+        </View>
+
+        {/* Google Gemini API Key */}
+        <View style={styles.section}>
+          <View style={styles.sectionHeader}>
+            <Key size={16} color={WT.blue} />
+            <Text style={styles.sectionTitle}>{es ? 'Clave API de Google Gemini' : 'Google Gemini API Key'}</Text>
+          </View>
+          <Text style={styles.fieldLabel}>{es ? 'Clave API' : 'API Key'}</Text>
+          <TextInput
+            style={styles.apiKeyInput}
+            value={geminiApiKey}
+            onChangeText={(t) => {
+              console.log('[Settings] Gemini API key changed');
+              setGeminiApiKey(t);
+            }}
+            placeholder="AIza..."
+            placeholderTextColor={WT.textTertiary}
+            autoCapitalize="none"
+            autoCorrect={false}
+            secureTextEntry={true}
+            multiline={false}
+          />
+          <Text style={styles.fieldHint}>
+            {es
+              ? 'Reemplaza la Gemini integrada por la tuya. Con tu propia clave no se aplica el limite de escaneos gratis.'
+              : 'Replaces the built-in Gemini with your own. With your own key the free scan limit does not apply.'}
+          </Text>
+          <Text style={styles.fieldHint}>
+            {es
+              ? '1) Ve a aistudio.google.com/apikey e inicia sesion con tu cuenta de Google.  2) Toca Create API key.  3) Copia la clave.  4) Pegala arriba y toca Guardar.'
+              : '1) Go to aistudio.google.com/apikey and sign in with your Google account.  2) Tap Create API key.  3) Copy the key.  4) Paste it above and tap Save.'}
           </Text>
         </View>
 

@@ -42,6 +42,11 @@ async function ensureCapEpoch(): Promise<void> {
 
 export async function getFreeScanCount(): Promise<number> {
   try {
+    // Settings reads this directly to draw the usage meter. Without the epoch
+    // baseline it would show a pre-cap install its old uncapped total — e.g.
+    // "45 of 20 free scans used" — and push a paid-key upsell at somebody the
+    // scan path is about to grant a full 20 to.
+    await ensureCapEpoch();
     const raw = await SecureStore.getItemAsync(STORAGE_KEYS.FREE_SCAN_COUNT);
     const count = raw ? parseInt(raw, 10) : 0;
     return Number.isFinite(count) && count >= 0 ? count : 0;
@@ -53,7 +58,6 @@ export async function getFreeScanCount(): Promise<number> {
 
 export async function getRemainingFreeScans(): Promise<number> {
   if (DISABLE_FREE_LIMITS_FOR_CLOSED_TEST) return Infinity;
-  await ensureCapEpoch();
   const used = await getFreeScanCount();
   return Math.max(0, FREE_SCAN_LIMIT - used);
 }

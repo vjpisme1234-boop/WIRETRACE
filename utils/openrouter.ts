@@ -64,7 +64,18 @@ async function getAnthropicKey(): Promise<string> {
 }
 
 async function getGeminiKey(): Promise<string> {
+  const stored = await SecureStore.getItemAsync(STORAGE_KEYS.GEMINI_API_KEY);
+  if (stored && stored.trim()) return stored.trim();
   return DEFAULT_GEMINI_KEY;
+}
+
+// The free-scan cap meters the key WE ship, not one the customer pays for. A
+// customer who pastes their own Gemini key is billed directly by Google, so
+// counting their scans against the 20-scan allowance would be metering
+// somebody else's bill.
+async function isUsingBuiltInGeminiKey(): Promise<boolean> {
+  const stored = await SecureStore.getItemAsync(STORAGE_KEYS.GEMINI_API_KEY);
+  return !(stored && stored.trim());
 }
 
 function validateOpenRouterKeyFormat(apiKey: string): void {
@@ -352,10 +363,11 @@ async function runWithFallback(
 }
 
 async function callGeminiWithFreeScanLimit(messages: ChatMessage[], maxTokens: number): Promise<string> {
+  if (!(await isUsingBuiltInGeminiKey())) return callGemini(messages, maxTokens);
   const remaining = await getRemainingFreeScans();
   if (remaining <= 0) {
     throw freeAllowanceError(
-      `You've used all ${FREE_SCAN_LIMIT} free scans on the built-in AI for this install. Add your own Anthropic, OpenRouter, or OpenAI key in Settings to keep scanning.`
+      `You've used all ${FREE_SCAN_LIMIT} free scans on the built-in AI for this install. Add your own Gemini, Anthropic, OpenRouter, or OpenAI key in Settings to keep scanning. A Gemini key is free at aistudio.google.com/apikey.`
     );
   }
   const result = await callGemini(messages, maxTokens);
@@ -364,10 +376,11 @@ async function callGeminiWithFreeScanLimit(messages: ChatMessage[], maxTokens: n
 }
 
 async function callGeminiWithTextGenerationLimit(messages: ChatMessage[], maxTokens: number): Promise<string> {
+  if (!(await isUsingBuiltInGeminiKey())) return callGemini(messages, maxTokens);
   const remaining = await getRemainingFreeTextGenerations();
   if (remaining <= 0) {
     throw freeAllowanceError(
-      `You've used all ${FREE_TEXT_GENERATION_LIMIT} free AI requests on the built-in AI for this install. Add your own Anthropic, OpenRouter, or OpenAI key in Settings to keep going.`
+      `You've used all ${FREE_TEXT_GENERATION_LIMIT} free AI requests on the built-in AI for this install. Add your own Gemini, Anthropic, OpenRouter, or OpenAI key in Settings to keep going. A Gemini key is free at aistudio.google.com/apikey.`
     );
   }
   const result = await callGemini(messages, maxTokens);
@@ -386,7 +399,7 @@ async function callVisionWithFallback(imageUrl: string, prompt: string, systemPr
       if (provider === 'openai') return callOpenAI(messages, 4096);
       return callGeminiWithFreeScanLimit(messages, 4096);
     },
-    'No AI key configured. Add your Anthropic, OpenRouter, or OpenAI key in Settings, or check that the built-in Gemini key is configured.'
+    'No AI key configured. Add a Gemini, Anthropic, OpenRouter, or OpenAI key in Settings. A Gemini key is free at aistudio.google.com/apikey.'
   );
 }
 
@@ -412,7 +425,7 @@ async function callMultiVisionWithFallback(imageUrls: string[], prompt: string, 
       if (provider === 'openai') return callOpenAI(messages, maxTokens);
       return callGeminiWithFreeScanLimit(messages, maxTokens);
     },
-    'No AI key configured. Add your Anthropic, OpenRouter, or OpenAI key in Settings, or check that the built-in Gemini key is configured.'
+    'No AI key configured. Add a Gemini, Anthropic, OpenRouter, or OpenAI key in Settings. A Gemini key is free at aistudio.google.com/apikey.'
   );
 }
 
@@ -426,7 +439,7 @@ async function callTextWithFallback(messages: ChatMessage[], maxTokens: number):
       if (provider === 'openai') return callOpenAI(messages, maxTokens);
       return callGeminiWithTextGenerationLimit(messages, maxTokens);
     },
-    'No AI key configured. Add your Anthropic, OpenRouter, or OpenAI key in Settings, or check that the built-in Gemini key is configured.'
+    'No AI key configured. Add a Gemini, Anthropic, OpenRouter, or OpenAI key in Settings. A Gemini key is free at aistudio.google.com/apikey.'
   );
 }
 
@@ -455,7 +468,7 @@ These numbers are NOT wires — never create a wire entry from them:
 - The number inside a component label ("CR1", "FU2", "OL1")
 - Item balloons or bill-of-materials callouts
 - Sheet, page, revision, or drawing numbers, and dimension callouts
-If a numbered conductor runs off the edge of the sheet, still record it: give the terminal you can see and leave the far end empty rather than dropping the wire.
+If a numbered conductor runs off the edge of the sheet, still record it: give the terminal you can see and set the far end to an empty string "" rather than dropping the wire. Both "fromPoint" and "toPoint" must always be present on every wire, even when one end is off-sheet.
 
 RECOGNIZED COMPONENT TYPES (use these exact strings in "type"):
 resistor, capacitor, inductor, transformer, auto-transformer, current-transformer, potential-transformer,

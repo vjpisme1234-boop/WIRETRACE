@@ -76,3 +76,7 @@ next-env.d.ts
 # Archived release APKs kept as rollback points — never commit binaries
 builds/
 *.apk
+
+# Claude Code local tooling
+.agents/
+skills-lock.json

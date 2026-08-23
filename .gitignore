@@ -72,3 +72,7 @@ htmlcov/
 .cache/
 build/
 next-env.d.ts
+
+# Archived release APKs kept as rollback points — never commit binaries
+builds/
+*.apk

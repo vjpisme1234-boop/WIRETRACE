@@ -40,7 +40,7 @@ Each entry is a JSON file matching the `GoldenSchematic` type in
 
 1. Scan a real schematic in the app as normal.
 2. Use the correction UI to fix every mistake until it's 100% right.
-3. Export that verified data into a JSON file here matching the format above (a small export helper can be added once there are entries worth exporting — for now, copying the corrected values by hand is fine for a handful of schematics).
+3. Mark it as a standard, then export it with `exportGoldenEntry` from `utils/golden-set-export.ts`. It writes `<id>.json` to the app document directory and logs the same JSON, so a release build can be read off the phone with logcat. `goldenSetBlockers` refuses a scan that has not been verified — an unchecked scan would score the AI against its own output and report perfect accuracy no matter how wrong it was.
 4. Add the reference photo alongside it.
 
 ## Running the eval

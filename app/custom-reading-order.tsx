@@ -80,7 +80,11 @@ function OrderedWireRow({
   onDragReleaseRef.current = onDragRelease;
 
   const settle = useCallback(() => {
-    Animated.timing(translateY, { toValue: 0, duration: 150, useNativeDriver: true }).start();
+    // useNativeDriver must stay false here: translateY is driven by
+    // setValue() on every move, and once a node has been handed to the native
+    // driver those JS-side writes stop taking effect — the row then jumps or
+    // sticks instead of following the finger.
+    Animated.timing(translateY, { toValue: 0, duration: 150, useNativeDriver: false }).start();
     setDragging(false);
     onDragReleaseRef.current();
   }, [translateY]);
@@ -135,6 +139,79 @@ function OrderedWireRow({
   );
 }
 
+const SWIPE_ARM = 10;      // horizontal travel before we claim the gesture
+const SWIPE_COMMIT = 90;   // travel needed to actually add the wire
+
+// A horizontal swipe is used rather than a vertical drag because the list
+// lives in a vertical ScrollView: claiming only when the finger is moving
+// sideways leaves scrolling completely untouched, instead of fighting the
+// ScrollView for the same axis.
+function AvailableWireRow({
+  wire,
+  onAdd,
+}: {
+  wire: WireInfo;
+  onAdd: (id: string) => void;
+}) {
+  const translateX = useRef(new Animated.Value(0)).current;
+  const onAddRef = useRef(onAdd);
+  onAddRef.current = onAdd;
+
+  const responder = useRef(
+    PanResponder.create({
+      onStartShouldSetPanResponder: () => false,
+      onMoveShouldSetPanResponder: (_, g) =>
+        g.dx > SWIPE_ARM && Math.abs(g.dx) > Math.abs(g.dy) * 1.5,
+      onPanResponderMove: (_, g) => {
+        translateX.setValue(Math.max(0, g.dx));
+      },
+      onPanResponderRelease: (_, g) => {
+        if (g.dx >= SWIPE_COMMIT) {
+          // Carry the row off to the right, then hand it to the list. The add
+          // unmounts this row, so there is nothing to spring back.
+          Animated.timing(translateX, { toValue: 400, duration: 140, useNativeDriver: false }).start(
+            () => onAddRef.current(wire.id)
+          );
+          return;
+        }
+        Animated.spring(translateX, { toValue: 0, useNativeDriver: false, bounciness: 6 }).start();
+      },
+      onPanResponderTerminate: () => {
+        Animated.spring(translateX, { toValue: 0, useNativeDriver: false, bounciness: 6 }).start();
+      },
+    })
+  ).current;
+
+  const hintOpacity = translateX.interpolate({
+    inputRange: [0, SWIPE_COMMIT],
+    outputRange: [0, 1],
+    extrapolate: 'clamp',
+  });
+
+  return (
+    <View style={styles.swipeWrap}>
+      <Animated.View style={[styles.swipeHint, { opacity: hintOpacity }]}>
+        <Plus size={18} color={WT.green} />
+      </Animated.View>
+      <Animated.View
+        {...responder.panHandlers}
+        style={[styles.availableRow, { transform: [{ translateX }] }]}
+      >
+        <View style={[styles.wireDot, { backgroundColor: wireDotColor(wire.color) }]} />
+        <Pressable onPress={() => onAdd(wire.id)} style={styles.availableTapArea}>
+          <Text style={styles.orderWireLabel} numberOfLines={1}>{wire.label}</Text>
+          <Text style={styles.orderWireRoute} numberOfLines={1}>
+            {wire.fromPoint} {'→'} {wire.toPoint}
+          </Text>
+        </Pressable>
+        <Pressable onPress={() => onAdd(wire.id)} style={styles.addBtn} hitSlop={8}>
+          <Plus size={16} color={WT.blue} />
+        </Pressable>
+      </Animated.View>
+    </View>
+  );
+}
+
 export default function CustomReadingOrderScreen() {
   const insets = useSafeAreaInsets();
   const params = useLocalSearchParams<{ schematicId: string }>();
@@ -145,6 +222,10 @@ export default function CustomReadingOrderScreen() {
   const [saving, setSaving] = useState(false);
 
   const dragRef = useRef<DragBookkeeping>({ id: null, startIndex: 0, currentIndex: 0 });
+  // handleDragMove needs the current length without re-creating the callback
+  // on every reorder, which would hand each row a new PanResponder mid-drag.
+  const orderRef = useRef<string[]>(order);
+  orderRef.current = order;
 
   useEffect(() => {
     loadAppLanguage().then((lang) => setEs(isSpanish(lang)));
@@ -175,6 +256,15 @@ export default function CustomReadingOrderScreen() {
     setOrder((prev) => [...prev, id]);
   }, []);
 
+  const handleAddAll = useCallback(() => {
+    LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
+    setOrder((prev) => [...prev, ...availableWires.map((w) => w.id)]);
+  }, [availableWires]);
+
+
+
+
+
   const handleRemove = useCallback((id: string) => {
     LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
     setOrder((prev) => prev.filter((x) => x !== id));
@@ -182,14 +272,27 @@ export default function CustomReadingOrderScreen() {
 
   const handleDragMove = useCallback((id: string, startingIndex: number, dy: number) => {
     if (dragRef.current.id !== id) return;
-    const rawIndex = dragRef.current.startIndex + Math.round(dy / ROW_HEIGHT);
+
+    // The bookkeeping ref is advanced HERE rather than inside the setOrder
+    // updater. React may invoke an updater more than once for a single update
+    // (it does exactly that under StrictMode in development), and this one
+    // used to mutate dragRef.current.currentIndex as a side effect — so the
+    // row's tracked position could advance twice for one move, splice from
+    // the wrong slot, and land somewhere other than where it was dropped.
+    // Updaters have to stay pure; the ref moves outside.
+    const from = dragRef.current.currentIndex;
+    const target = Math.max(
+      0,
+      Math.min(orderRef.current.length - 1, dragRef.current.startIndex + Math.round(dy / ROW_HEIGHT))
+    );
+    if (target === from) return;
+    dragRef.current.currentIndex = target;
+
     setOrder((prev) => {
-      const clamped = Math.max(0, Math.min(prev.length - 1, rawIndex));
-      if (clamped === dragRef.current.currentIndex) return prev;
+      if (from < 0 || from >= prev.length) return prev;
       const next = [...prev];
-      const [item] = next.splice(dragRef.current.currentIndex, 1);
-      next.splice(clamped, 0, item);
-      dragRef.current.currentIndex = clamped;
+      const [item] = next.splice(from, 1);
+      next.splice(target, 0, item);
       return next;
     });
   }, []);
@@ -244,8 +347,8 @@ export default function CustomReadingOrderScreen() {
           <ListChecks size={15} color={WT.yellow} />
           <Text style={styles.hintText}>
             {es
-              ? 'Toca un cable abajo para añadirlo a la lista. Arrastra el ⋮⋮ para cambiar el orden. Solo los cables en la lista se leerán en voz alta, en este orden exacto.'
-              : 'Tap a wire below to add it to the list. Drag the ⋮⋮ handle to reorder. Only the wires in the list will be read aloud, in this exact order.'}
+              ? 'Desliza un cable hacia la derecha para añadirlo, o tócalo. Usa Añadir todos para agregarlos todos. Arrastra el ⋮⋮ para cambiar el orden. Solo los cables en la lista se leerán en voz alta, en este orden exacto.'
+              : 'Swipe a wire right to add it, or just tap it. Use Add all to take them all. Drag the ⋮⋮ handle to reorder. Only the wires in the list will be read aloud, in this exact order.'}
           </Text>
         </View>
 
@@ -274,28 +377,29 @@ export default function CustomReadingOrderScreen() {
           </View>
         )}
 
-        <Text style={[styles.sectionLabel, { marginTop: 20 }]}>
-          {es ? `TODOS LOS CABLES (${availableWires.length})` : `ALL WIRES (${availableWires.length})`}
-        </Text>
+        <View style={styles.availableHeader}>
+          <Text style={[styles.sectionLabel, { marginTop: 0, marginHorizontal: 0, flex: 1 }]}>
+            {es ? `TODOS LOS CABLES (${availableWires.length})` : `ALL WIRES (${availableWires.length})`}
+          </Text>
+          {availableWires.length > 0 ? (
+            <Pressable onPress={handleAddAll} style={styles.addAllBtn} hitSlop={8}>
+              <Plus size={14} color={WT.blue} />
+              <Text style={styles.addAllBtnText}>
+                {es ? `Añadir las ${availableWires.length}` : `Add all ${availableWires.length}`}
+              </Text>
+            </Pressable>
+          ) : null}
+        </View>
         {availableWires.length === 0 ? (
           <Text style={styles.emptyText}>
             {es ? 'Todos los cables están en la lista.' : 'All wires are already in the list.'}
           </Text>
         ) : (
-          availableWires.map((wire) => (
-            <Pressable key={wire.id} onPress={() => handleAdd(wire.id)} style={styles.availableRow}>
-              <View style={[styles.wireDot, { backgroundColor: wireDotColor(wire.color) }]} />
-              <View style={{ flex: 1 }}>
-                <Text style={styles.orderWireLabel} numberOfLines={1}>{wire.label}</Text>
-                <Text style={styles.orderWireRoute} numberOfLines={1}>
-                  {wire.fromPoint} {'→'} {wire.toPoint}
-                </Text>
-              </View>
-              <View style={styles.addBtn}>
-                <Plus size={16} color={WT.blue} />
-              </View>
-            </Pressable>
-          ))
+          <View>
+            {availableWires.map((wire) => (
+              <AvailableWireRow key={wire.id} wire={wire} onAdd={handleAdd} />
+            ))}
+          </View>
         )}
       </ScrollView>
 
@@ -433,6 +537,61 @@ const styles = StyleSheet.create({
     width: 28,
     height: 28,
     alignItems: 'center',
+    justifyContent: 'center',
+  },
+  availableHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginHorizontal: 16,
+    marginTop: 20,
+    marginBottom: 8,
+  },
+  addAllBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 8,
+    backgroundColor: WT.blueMuted,
+    borderWidth: 1,
+    borderColor: WT.blueDim,
+  },
+  addAllBtnText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: WT.blue,
+  },
+  scrubHandle: {
+    width: 30,
+    height: '100%',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  availableTapArea: {
+    flex: 1,
+    justifyContent: 'center',
+    height: '100%',
+  },
+  availableRowTaken: {
+    opacity: 0.45,
+    borderColor: WT.green,
+  },
+  availableRowScrubbing: {
+    borderColor: WT.blue,
+  },
+  swipeWrap: {
+    position: 'relative',
+    justifyContent: 'center',
+  },
+  // Sits behind the row and is revealed as it slides right, so the gesture
+  // shows what it is going to do before you commit to it.
+  swipeHint: {
+    position: 'absolute',
+    left: 30,
+    top: 0,
+    bottom: 8,
     justifyContent: 'center',
   },
   availableRow: {

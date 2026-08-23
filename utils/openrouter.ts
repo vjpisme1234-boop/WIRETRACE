@@ -446,6 +446,17 @@ CRITICAL INSTRUCTIONS:
 7. WIRE COLOR — only set "color" when it is EXPLICITLY shown in the image: the wire itself is drawn/rendered in that color, or there is a printed color abbreviation next to it (e.g. "BLU", "RD", "BLK", "WHT", "GRN", "YEL", "ORG", "BRN", "VIO", "GRY"). NEVER infer or assume a color from voltage level, polarity (positive/negative), AC vs DC, or component type — a 24VDC or negative wire is NOT automatically blue, a 120VAC wire is NOT automatically red, etc. If no color is drawn or printed, omit the "color" field entirely rather than guessing.
 8. STARTING POINT — determine whether there is an unambiguous place to start reading (e.g. a wire/line explicitly labeled "1", "L1", a clearly marked power input, or a title block indicating a start). Set "startPointAmbiguous" to true if there is no such clear starting point (e.g. multiple plausible entry points, no numbering visible, a sheet that begins mid-circuit) — do NOT silently pick one and call it certain. Set it to false only when a start is genuinely obvious.
 
+WHAT COUNTS AS A WIRE:
+Every conductor line that has a number printed on it or immediately beside it is a wire. Record one wire per such number, follow that line to both of its ends, and record the exact terminal designation at each end. Work through the drawing systematically so no numbered line is skipped — the wire count you report should match the numbers actually printed on the drawing.
+These numbers are NOT wires — never create a wire entry from them:
+- Rung or line numbers running down the left margin of a ladder diagram (they number the rung, not a conductor)
+- Cross-reference numbers pointing to another rung, sheet, or drawing
+- The pin part of a terminal designation (the "3" in "TB1-3")
+- The number inside a component label ("CR1", "FU2", "OL1")
+- Item balloons or bill-of-materials callouts
+- Sheet, page, revision, or drawing numbers, and dimension callouts
+If a numbered conductor runs off the edge of the sheet, still record it: give the terminal you can see and leave the far end empty rather than dropping the wire.
+
 RECOGNIZED COMPONENT TYPES (use these exact strings in "type"):
 resistor, capacitor, inductor, transformer, auto-transformer, current-transformer, potential-transformer,
 diode, zener-diode, LED, transistor, thyristor, TRIAC,

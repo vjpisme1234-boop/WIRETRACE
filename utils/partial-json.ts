@@ -146,6 +146,15 @@ export function salvagePartialAnalysis(rawContent: string): SalvagedAnalysis {
   };
 }
 
+/** Same rescue for a response whose payload is one named array — the shape
+ * each pass of a split analysis returns. Only the elements that parsed
+ * cleanly before the cutoff come back. */
+export function salvagePartialArrayField(rawContent: string, key: string): unknown[] {
+  const cleaned = rawContent.replace(/```json\n?/g, '').replace(/```\n?/g, '');
+  const value = extractField(cleaned, key);
+  return Array.isArray(value) ? value : [];
+}
+
 /** Same rescue as salvagePartialAnalysis, for the reading-steps response
  * shape ({ steps: [...], pendingChoice: ... }). A truncated pendingChoice
  * object can't be trusted, so callers should treat it as absent when

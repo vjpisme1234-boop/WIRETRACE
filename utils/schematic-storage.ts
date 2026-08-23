@@ -1,4 +1,5 @@
 import * as FileSystem from 'expo-file-system/legacy';
+import type { MultiPassCoverage } from '@/utils/multi-pass-analysis';
 import type { JunctionChoice } from '@/utils/schematic-graph';
 
 const SCHEMATICS_DIR = FileSystem.documentDirectory + 'schematics/';
@@ -78,6 +79,8 @@ export interface SchematicAnalysis {
   customWireOrder?: string[];
   /** Structural inconsistencies caught by deterministic post-validation (e.g. a connection referencing a wire/component that was never declared). Informational only — not blocking. */
   validationWarnings?: string[];
+  /** How much of the drawing a High Detail scan actually got through. Absent on Standard scans, which have nothing per-pass to report. Stored rather than kept in screen state so the figures survive a trip to a sub-screen and back. */
+  scanCoverage?: MultiPassCoverage;
   /** True once a user has verified this scan and saved it as a trusted reference for their team. */
   isStandard?: boolean;
   /** Display name for the standard, if different from the schematic's own name. */

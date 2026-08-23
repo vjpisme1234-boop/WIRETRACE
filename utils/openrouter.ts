@@ -1,6 +1,7 @@
 import * as SecureStore from 'expo-secure-store';
 import { OPENROUTER_BASE_URL, OPENROUTER_MODEL, STORAGE_KEYS } from '@/constants/wiretrace';
 import type { ReadingStep } from '@/utils/schematic-storage';
+import { getUncoveredWires } from '@/utils/schematic-graph';
 import type { JunctionChoice } from '@/utils/schematic-graph';
 import { loadUIPreferences } from '@/utils/ui-preferences';
 import {
@@ -91,6 +92,16 @@ interface ChatMessage {
   content: string | { type: string; text?: string; image_url?: { url: string } }[];
 }
 
+// A response that hit max_tokens still comes back as a 200 with a body, so
+// nothing downstream can tell it apart from a complete answer — the provider
+// only says so in the stop reason. Carrying that flag next to the text is what
+// lets a caller distinguish "the model finished early" from "the model was cut
+// off mid-sentence", which are the same short result otherwise.
+interface ProviderResponse {
+  content: string;
+  truncated: boolean;
+}
+
 async function callOpenAICompatible(opts: {
   provider: string;
   url: string;
@@ -99,7 +110,7 @@ async function callOpenAICompatible(opts: {
   messages: ChatMessage[];
   maxTokens: number;
   extraHeaders?: Record<string, string>;
-}): Promise<string> {
+}): Promise<ProviderResponse> {
   const { provider, url, apiKey, model, messages, maxTokens, extraHeaders } = opts;
   console.log(`[${provider}] Making API request`, { model, messageCount: messages.length });
 
@@ -125,10 +136,11 @@ async function callOpenAICompatible(opts: {
   const data = await response.json();
   const content = data.choices?.[0]?.message?.content;
   if (!content) throw new Error(`No content in ${provider} response`);
-  return typeof content === 'string' ? content.trim() : String(content);
+  const text = typeof content === 'string' ? content.trim() : String(content);
+  return { content: text, truncated: data.choices?.[0]?.finish_reason === 'length' };
 }
 
-async function callOpenRouter(messages: ChatMessage[], maxTokens = 4096): Promise<string> {
+async function callOpenRouter(messages: ChatMessage[], maxTokens = 4096): Promise<ProviderResponse> {
   const apiKey = await getApiKey();
   if (!apiKey) {
     throw new Error('No API key configured. Please add your OpenRouter API key in Settings.');
@@ -146,7 +158,7 @@ async function callOpenRouter(messages: ChatMessage[], maxTokens = 4096): Promis
   });
 }
 
-async function callOpenAI(messages: ChatMessage[], maxTokens = 2048): Promise<string> {
+async function callOpenAI(messages: ChatMessage[], maxTokens = 2048): Promise<ProviderResponse> {
   const apiKey = await getOpenAIKey();
   if (!apiKey) throw new Error('OpenAI key is not configured.');
   return callOpenAICompatible({
@@ -159,7 +171,7 @@ async function callOpenAI(messages: ChatMessage[], maxTokens = 2048): Promise<st
   });
 }
 
-async function callGemini(messages: ChatMessage[], maxTokens = 2048): Promise<string> {
+async function callGemini(messages: ChatMessage[], maxTokens = 2048): Promise<ProviderResponse> {
   const apiKey = await getGeminiKey();
   if (!apiKey) throw new Error('Gemini key is not configured.');
   return callOpenAICompatible({
@@ -192,7 +204,7 @@ async function callAnthropic(
   messages: ChatMessage[],
   maxTokens = 2048,
   model: string = ANTHROPIC_MODEL
-): Promise<string> {
+): Promise<ProviderResponse> {
   const apiKey = await getAnthropicKey();
   if (!apiKey) throw new Error('Anthropic key is not configured.');
 
@@ -230,7 +242,7 @@ async function callAnthropic(
   const data = await response.json();
   const content = data.content?.[0]?.text;
   if (!content) throw new Error('No content in Anthropic response');
-  return content.trim();
+  return { content: content.trim(), truncated: data.stop_reason === 'max_tokens' };
 }
 
 function visionMessages(imageUrl: string, prompt: string, systemPrompt?: string): ChatMessage[] {
@@ -251,12 +263,12 @@ type ProviderName = 'anthropic' | 'openrouter' | 'openai' | 'gemini';
 interface ProviderAttempt {
   name: ProviderName;
   model: string;
-  run: () => Promise<string>;
+  run: () => Promise<ProviderResponse>;
 }
 
 async function buildProviderAttempts(
   selectedProvider: string,
-  run: (provider: ProviderName, model: string) => Promise<string>
+  run: (provider: ProviderName, model: string) => Promise<ProviderResponse>
 ): Promise<ProviderAttempt[]> {
   const [anthropicKey, openRouterKey, openAIKey, geminiKey] = await Promise.all([
     getAnthropicKey(),
@@ -305,9 +317,9 @@ function isFreeAllowanceError(error: unknown): boolean {
 
 async function runWithFallback(
   selectedProvider: string,
-  run: (provider: ProviderName, model: string) => Promise<string>,
+  run: (provider: ProviderName, model: string) => Promise<ProviderResponse>,
   noKeyHint: string
-): Promise<string> {
+): Promise<ProviderResponse> {
   const attempts = await buildProviderAttempts(selectedProvider, run);
 
   if (attempts.length === 0) {
@@ -362,8 +374,30 @@ async function runWithFallback(
   throw new Error(`All AI providers failed. ${errors.join(' | ')}`);
 }
 
-async function callGeminiWithFreeScanLimit(messages: ChatMessage[], maxTokens: number): Promise<string> {
+// The free allowance meters schematics, not HTTP requests. An analysis that
+// splits itself across several vision calls would otherwise burn several of
+// the 20 free scans on one drawing, so a scan opens a billing session: the
+// first metered call charges the allowance and every later call in that same
+// session rides on that one charge. The analyze screen runs one scan at a
+// time, so a single module-level session is enough; nesting is tolerated so a
+// caller can wrap a helper that already wraps itself.
+let activeScanBilling: { charged: boolean } | null = null;
+
+export async function withSingleScanBilling<T>(run: () => Promise<T>): Promise<T> {
+  if (activeScanBilling) return run();
+  activeScanBilling = { charged: false };
+  try {
+    return await run();
+  } finally {
+    activeScanBilling = null;
+  }
+}
+
+async function callGeminiWithFreeScanLimit(messages: ChatMessage[], maxTokens: number): Promise<ProviderResponse> {
   if (!(await isUsingBuiltInGeminiKey())) return callGemini(messages, maxTokens);
+  // Already paid for within this session — skip the check too, or a scan that
+  // consumed the last of the allowance would fail its own later passes.
+  if (activeScanBilling?.charged) return callGemini(messages, maxTokens);
   const remaining = await getRemainingFreeScans();
   if (remaining <= 0) {
     throw freeAllowanceError(
@@ -371,11 +405,12 @@ async function callGeminiWithFreeScanLimit(messages: ChatMessage[], maxTokens: n
     );
   }
   const result = await callGemini(messages, maxTokens);
+  if (activeScanBilling) activeScanBilling.charged = true;
   await incrementFreeScanCount();
   return result;
 }
 
-async function callGeminiWithTextGenerationLimit(messages: ChatMessage[], maxTokens: number): Promise<string> {
+async function callGeminiWithTextGenerationLimit(messages: ChatMessage[], maxTokens: number): Promise<ProviderResponse> {
   if (!(await isUsingBuiltInGeminiKey())) return callGemini(messages, maxTokens);
   const remaining = await getRemainingFreeTextGenerations();
   if (remaining <= 0) {
@@ -388,19 +423,29 @@ async function callGeminiWithTextGenerationLimit(messages: ChatMessage[], maxTok
   return result;
 }
 
-async function callVisionWithFallback(imageUrl: string, prompt: string, systemPrompt?: string): Promise<string> {
+// A dense schematic serializes to a lot of JSON: every wire carries two
+// endpoints, a voltage and a confidence, and every component carries a
+// description. At 4096 the reply was being cut off mid-object on real
+// drawings, and salvage then reported a wire count that looked plausible but
+// was short. Reading-step generation already asks for 16384; the pass that has
+// to enumerate every wire had the smallest budget of the three. This is a cap,
+// not a reservation — a small drawing still costs what it costs.
+const VISION_MAX_TOKENS = 16384;
+
+export async function callVisionWithFallback(imageUrl: string, prompt: string, systemPrompt?: string): Promise<string> {
   const uiPrefs = await loadUIPreferences();
-  return runWithFallback(
+  const response = await runWithFallback(
     uiPrefs.visionProvider,
     (provider, model) => {
       const messages = visionMessages(imageUrl, prompt, systemPrompt);
-      if (provider === 'anthropic') return callAnthropic(messages, 4096, model);
-      if (provider === 'openrouter') return callOpenRouter(messages, 4096);
-      if (provider === 'openai') return callOpenAI(messages, 4096);
-      return callGeminiWithFreeScanLimit(messages, 4096);
+      if (provider === 'anthropic') return callAnthropic(messages, VISION_MAX_TOKENS, model);
+      if (provider === 'openrouter') return callOpenRouter(messages, VISION_MAX_TOKENS);
+      if (provider === 'openai') return callOpenAI(messages, VISION_MAX_TOKENS);
+      return callGeminiWithFreeScanLimit(messages, VISION_MAX_TOKENS);
     },
     'No AI key configured. Add a Gemini, Anthropic, OpenRouter, or OpenAI key in Settings. A Gemini key is free at aistudio.google.com/apikey.'
   );
+  return response.content;
 }
 
 function visionMessagesMulti(imageUrls: string[], prompt: string, systemPrompt: string): ChatMessage[] {
@@ -416,7 +461,7 @@ function visionMessagesMulti(imageUrls: string[], prompt: string, systemPrompt: 
 
 async function callMultiVisionWithFallback(imageUrls: string[], prompt: string, systemPrompt: string, maxTokens: number): Promise<string> {
   const uiPrefs = await loadUIPreferences();
-  return runWithFallback(
+  const response = await runWithFallback(
     uiPrefs.visionProvider,
     (provider, model) => {
       const messages = visionMessagesMulti(imageUrls, prompt, systemPrompt);
@@ -427,9 +472,17 @@ async function callMultiVisionWithFallback(imageUrls: string[], prompt: string, 
     },
     'No AI key configured. Add a Gemini, Anthropic, OpenRouter, or OpenAI key in Settings. A Gemini key is free at aistudio.google.com/apikey.'
   );
+  return response.content;
 }
 
-async function callTextWithFallback(messages: ChatMessage[], maxTokens: number): Promise<string> {
+// Callers that only want the text keep using callTextWithFallback; the ones
+// that also need to know whether the model was cut off mid-answer take the
+// full response instead.
+export async function callTextWithFallback(messages: ChatMessage[], maxTokens: number): Promise<string> {
+  return (await callTextWithFallbackDetailed(messages, maxTokens)).content;
+}
+
+async function callTextWithFallbackDetailed(messages: ChatMessage[], maxTokens: number): Promise<ProviderResponse> {
   const uiPrefs = await loadUIPreferences();
   return runWithFallback(
     uiPrefs.visionProvider,
@@ -504,6 +557,14 @@ Return ONLY a valid JSON object — NO markdown, NO code fences, NO comments:
   "startPointAmbiguous": false
 }`;
 
+// Passes that classify components need the same taxonomy the single-pass
+// prompt uses. Slicing it back out of that prompt keeps one authoritative
+// list rather than a second copy that drifts out of step with it.
+export const RECOGNIZED_COMPONENT_TYPES = ANALYSIS_SYSTEM_PROMPT.slice(
+  ANALYSIS_SYSTEM_PROMPT.indexOf('RECOGNIZED COMPONENT TYPES'),
+  ANALYSIS_SYSTEM_PROMPT.indexOf('WIRE COLOR ABBREVIATIONS')
+).trim();
+
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
@@ -518,7 +579,7 @@ export interface AnalysisResult {
   validationWarnings?: string[];
 }
 
-function parseJsonResult<T>(content: string, label: string): T {
+export function parseJsonResult<T>(content: string, label: string): T {
   const cleaned = content.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
   try {
     return JSON.parse(cleaned) as T;
@@ -573,23 +634,33 @@ function parseAnalysisWithSalvage(content: string, label: string): AnalysisResul
   }
 }
 
+interface ParsedReadingSteps {
+  steps: ReadingStep[];
+  pendingChoice: JunctionChoice | null;
+  /** True when the steps came out of the wreckage of an unparseable response rather than a clean one. */
+  salvaged: boolean;
+}
+
 // Same idea as parseAnalysisWithSalvage, for reading-steps responses. A
 // long schematic (many wires, verbose per-step detail) can push the model
 // past the token budget before it closes out the JSON — recovering
 // whatever steps parsed cleanly beats throwing the whole reading away.
-// pendingChoice is dropped on a salvage since a truncated one can't be
-// trusted; the caller's own uncovered-wire detection picks up the slack.
-function parseReadingStepsWithSalvage(content: string, label: string): ReadingStepsResult {
+// pendingChoice still goes on a salvage, because a branch read out of a
+// half-written response could send the reader down a wire that isn't there.
+// Losing it is not free though — the reading then stops with nothing left to
+// prompt the user to carry on — so the salvage is reported back rather than
+// letting a rescued two-step reading pass for the whole schematic.
+function parseReadingStepsWithSalvage(content: string, label: string): ParsedReadingSteps {
   try {
     const result = parseJsonResult<ReadingStepsResult>(content, label);
-    return { steps: result.steps ?? [], pendingChoice: result.pendingChoice ?? null };
+    return { steps: result.steps ?? [], pendingChoice: result.pendingChoice ?? null, salvaged: false };
   } catch (e) {
     const steps = salvagePartialReadingSteps(content);
     if (steps.length === 0) {
       throw e; // nothing recoverable
     }
     console.warn(`[OpenRouter] ${label} full parse failed — salvaged partial steps`, { stepCount: steps.length });
-    return { steps: steps as ReadingStep[], pendingChoice: null };
+    return { steps: steps as ReadingStep[], pendingChoice: null, salvaged: true };
   }
 }
 
@@ -628,7 +699,7 @@ export async function analyzeMultipleImages(base64Images: string[]): Promise<Ana
   const imageUrls = base64Images.map((b64) => `data:image/jpeg;base64,${b64}`);
   const prompt = `Analyze these ${base64Images.length} pages of an electrical schematic as a SINGLE complete document. Pages are in order. Combine all wires, components, connections, and unknown symbols from all pages into one unified JSON result. For items spanning pages, note the page in the description (e.g. "Wire 14, page 2").`;
 
-  const content = await callMultiVisionWithFallback(imageUrls, prompt, ANALYSIS_SYSTEM_PROMPT, 8192);
+  const content = await callMultiVisionWithFallback(imageUrls, prompt, ANALYSIS_SYSTEM_PROMPT, VISION_MAX_TOKENS);
 
   const parsed = parseAnalysisWithSalvage(content, 'analyzeMultipleImages');
   console.log('[OpenRouter] analyzeMultipleImages parsed', {
@@ -650,6 +721,69 @@ export async function analyzeMultipleImages(base64Images: string[]): Promise<Ana
 export interface ReadingStepsResult {
   steps: ReadingStep[];
   pendingChoice: JunctionChoice | null;
+  /** Why the steps end where they do, when the answer is anything other than "the path ran out". Absent on a reading that covered everything. */
+  stopReason?: ReadingStepsStopReason;
+}
+
+export interface ReadingStepsStopReason {
+  kind: 'branch' | 'truncated' | 'salvaged' | 'partial-coverage';
+  /** Plain-language sentence for the electrician, ready to show as-is. */
+  message: string;
+  wiresCovered: number;
+  wiresTotal: number;
+}
+
+// A reading that ends after two steps on a twenty-wire drawing has four
+// possible explanations and from the outside they look identical: the path
+// hit a split and is waiting on the user, the response was cut off at the
+// token ceiling, the JSON came back broken and had to be rescued, or the
+// model traced one branch and left the rest of the drawing alone. Only the
+// first is working as intended. Naming which one it was — with the wire
+// counts, since "2 of 20" is the number the electrician is actually reacting
+// to — keeps the explanation attached to the result instead of stranded in a
+// log line nobody on a job site will ever read.
+function describeStopReason(
+  wires: AnalysisResult['wires'],
+  steps: ReadingStep[],
+  pendingChoice: JunctionChoice | null,
+  parse: { truncated: boolean; salvaged: boolean }
+): ReadingStepsStopReason | undefined {
+  const wiresTotal = wires?.length ?? 0;
+  const wiresCovered = wiresTotal - getUncoveredWires(wires ?? [], steps).length;
+
+  if (parse.truncated) {
+    return {
+      kind: 'truncated',
+      message: `The AI hit its length limit partway through, so this reading covers only ${wiresCovered} of ${wiresTotal} wires. Generate it again, or read the rest as a second pass from where this one ends.`,
+      wiresCovered,
+      wiresTotal,
+    };
+  }
+  if (parse.salvaged) {
+    return {
+      kind: 'salvaged',
+      message: `Part of the AI response came back unreadable. ${wiresCovered} of ${wiresTotal} wires were recovered, and any branch it stopped at was lost with the rest — generate again for the full path.`,
+      wiresCovered,
+      wiresTotal,
+    };
+  }
+  if (pendingChoice) {
+    return {
+      kind: 'branch',
+      message: `The path splits at ${pendingChoice.terminal}, so the reading stops there rather than guessing which wire to follow — ${wiresCovered} of ${wiresTotal} wires so far. Choose a wire at the split and it carries on.`,
+      wiresCovered,
+      wiresTotal,
+    };
+  }
+  if (wiresCovered < wiresTotal) {
+    return {
+      kind: 'partial-coverage',
+      message: `This path covers ${wiresCovered} of ${wiresTotal} wires — the rest branch off elsewhere on the drawing and can be read as a second pass.`,
+      wiresCovered,
+      wiresTotal,
+    };
+  }
+  return undefined;
 }
 
 const READING_STEPS_SYSTEM_PROMPT = `You are an experienced electrical journeyman reading wire schematics aloud to a helper or apprentice on a job site. Generate step-by-step spoken instructions that:
@@ -703,17 +837,22 @@ export async function generateReadingSteps(
 Schematic analysis:
 ${JSON.stringify(analysis)}`;
 
-  const content = await callTextWithFallback([
+  const { content, truncated } = await callTextWithFallbackDetailed([
     { role: 'system', content: readingStepsPrompt(verbosity) },
     { role: 'user', content: userMessage },
   ], 16384);
 
-  const result = parseReadingStepsWithSalvage(content, 'generateReadingSteps');
-  console.log('[OpenRouter] generateReadingSteps parsed', {
-    stepCount: result.steps?.length,
-    pendingChoice: !!result.pendingChoice,
+  const parsed = parseReadingStepsWithSalvage(content, 'generateReadingSteps');
+  const stopReason = describeStopReason(analysis.wires, parsed.steps, parsed.pendingChoice, {
+    truncated,
+    salvaged: parsed.salvaged,
   });
-  return result;
+  console.log('[OpenRouter] generateReadingSteps parsed', {
+    stepCount: parsed.steps.length,
+    pendingChoice: !!parsed.pendingChoice,
+    stopReason: stopReason?.kind,
+  });
+  return { steps: parsed.steps, pendingChoice: parsed.pendingChoice, stopReason };
 }
 
 /**
@@ -740,17 +879,24 @@ The user just chose, at terminal ${resolvedTerminal}, to continue toward ${resol
 Schematic analysis:
 ${JSON.stringify(analysis)}`;
 
-  const content = await callTextWithFallback([
+  const { content, truncated } = await callTextWithFallbackDetailed([
     { role: 'system', content: readingStepsPrompt(verbosity) },
     { role: 'user', content: userMessage },
   ], 16384);
 
-  const result = parseReadingStepsWithSalvage(content, 'continueReadingSteps');
-  console.log('[OpenRouter] continueReadingSteps parsed', {
-    stepCount: result.steps?.length,
-    pendingChoice: !!result.pendingChoice,
+  const parsed = parseReadingStepsWithSalvage(content, 'continueReadingSteps');
+  // Coverage is judged against the whole sequence, not just this leg — only
+  // the new steps come back, but the user is looking at all of them.
+  const stopReason = describeStopReason(analysis.wires, [...priorSteps, ...parsed.steps], parsed.pendingChoice, {
+    truncated,
+    salvaged: parsed.salvaged,
   });
-  return result;
+  console.log('[OpenRouter] continueReadingSteps parsed', {
+    stepCount: parsed.steps.length,
+    pendingChoice: !!parsed.pendingChoice,
+    stopReason: stopReason?.kind,
+  });
+  return { steps: parsed.steps, pendingChoice: parsed.pendingChoice, stopReason };
 }
 
 /**
@@ -773,14 +919,24 @@ ${orderedWireLabels.map((label, i) => `${i + 1}. Wire ${label}`).join('\n')}
 Schematic analysis:
 ${JSON.stringify(analysis)}`;
 
-  const content = await callTextWithFallback([
+  const { content, truncated } = await callTextWithFallbackDetailed([
     { role: 'system', content: readingStepsPrompt(verbosity) },
     { role: 'user', content: userMessage },
   ], 16384);
 
-  const result = parseReadingStepsWithSalvage(content, 'generateCustomOrderReadingSteps');
-  console.log('[OpenRouter] generateCustomOrderReadingSteps parsed', { stepCount: result.steps?.length });
-  return result.steps;
+  const parsed = parseReadingStepsWithSalvage(content, 'generateCustomOrderReadingSteps');
+  // The wires were picked by hand here, so a short list is measurable against
+  // what was asked for rather than against the whole drawing.
+  if (truncated || parsed.salvaged || parsed.steps.length < orderedWireLabels.length) {
+    console.warn('[OpenRouter] generateCustomOrderReadingSteps returned fewer steps than wires requested', {
+      requested: orderedWireLabels.length,
+      stepCount: parsed.steps.length,
+      truncated,
+      salvaged: parsed.salvaged,
+    });
+  }
+  console.log('[OpenRouter] generateCustomOrderReadingSteps parsed', { stepCount: parsed.steps.length });
+  return parsed.steps;
 }
 
 // ---------------------------------------------------------------------------

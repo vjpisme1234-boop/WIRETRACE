@@ -707,6 +707,31 @@ export default function SettingsScreen() {
           </Text>
         </View>
 
+        <View style={styles.section}>
+          <View style={styles.sectionHeader}>
+            <Zap size={16} color={WT.blue} />
+            <Text style={styles.sectionTitle}>{es ? 'Detalle del Escaneo' : 'Scan Detail'}</Text>
+          </View>
+          <SegmentControl
+            options={['standard', 'highDetail'] as const}
+            value={uiPrefs.multiPassAnalysis ? 'highDetail' : 'standard'}
+            onChange={(v) => {
+              console.log('[Settings] Scan detail changed', { multiPassAnalysis: v === 'highDetail' });
+              updateUiPrefs({ multiPassAnalysis: v === 'highDetail' });
+            }}
+            labels={
+              es
+                ? { standard: 'Normal', highDetail: 'Alto Detalle' }
+                : { standard: 'Standard', highDetail: 'High Detail' }
+            }
+          />
+          <Text style={styles.fieldHint}>
+            {es
+              ? 'Normal lee el plano de una sola pasada. Alto Detalle lo lee en tres pasadas — primero los componentes, luego los cables, luego los números — y te dice cuántos números encontró y cuántos pudo colocar. Tarda más y cuesta más por escaneo, pero encuentra más números de cable en planos cargados.'
+              : 'Standard reads the drawing in one pass. High Detail reads it in three passes — components, then wires, then the printed numbers — and tells you how many numbers it found and how many it placed. It takes longer and costs more per scan, but it catches more wire numbers on dense drawings.'}
+          </Text>
+        </View>
+
         {/* About */}
         <View style={styles.section}>
           <View style={styles.sectionHeader}>

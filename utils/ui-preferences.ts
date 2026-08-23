@@ -19,6 +19,13 @@ export interface UIPreferences {
   /** Whether voice-note text is shown as a badge/popup, or stays audio-only (spoken back via TTS). */
   notesVisible: boolean;
   readingStyle: ReadingStyle;
+  /**
+   * Runs the scan as three narrower passes (components, then topology, then
+   * wire numbers) instead of one prompt that has to do all three under a
+   * single token ceiling. Slower and more requests per scan, so it stays
+   * opt-in until it has field mileage behind it.
+   */
+  multiPassAnalysis: boolean;
 }
 
 export const DEFAULT_UI_PREFERENCES: UIPreferences = {
@@ -31,6 +38,7 @@ export const DEFAULT_UI_PREFERENCES: UIPreferences = {
   visionProvider: 'gemini',
   notesVisible: true,
   readingStyle: 'detailed',
+  multiPassAnalysis: false,
 };
 
 const LEGACY_VISUAL_MODE_MAP: Record<string, VisualMode> = {
@@ -89,6 +97,8 @@ export async function loadUIPreferences(): Promise<UIPreferences> {
       visionProvider: normalizeVisionProvider(parsed.visionProvider),
       notesVisible: typeof parsed.notesVisible === 'boolean' ? parsed.notesVisible : DEFAULT_UI_PREFERENCES.notesVisible,
       readingStyle: normalizeReadingStyle(parsed),
+      multiPassAnalysis:
+        typeof parsed.multiPassAnalysis === 'boolean' ? parsed.multiPassAnalysis : DEFAULT_UI_PREFERENCES.multiPassAnalysis,
     };
   } catch (error) {
     console.error('[UI Preferences] Failed to load preferences', error);

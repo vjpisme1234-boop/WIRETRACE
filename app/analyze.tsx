@@ -10,6 +10,7 @@ import {
   StyleSheet,
   Text,
   TextInput,
+  useWindowDimensions,
   View,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -43,6 +44,7 @@ import {
 import { WT } from '@/constants/wiretrace';
 import { AppLanguage, isSpanish, loadAppLanguage } from '@/utils/app-language';
 import { analyzeSchematic, analyzeMultipleImages, AnalysisResult, generateCustomOrderReadingSteps, generateReadingSteps, parseVoiceCorrection } from '@/utils/openrouter';
+import { analyzeSchematicMultiPass, MultiPassCoverage } from '@/utils/multi-pass-analysis';
 import {
   generateSchematicName,
   getSchematic,
@@ -247,6 +249,11 @@ const EDIT_TITLES: Record<EditTarget['kind'], { en: string; es: string }> = {
 
 export default function AnalyzeScreen() {
   const insets = useSafeAreaInsets();
+  const { height: windowHeight } = useWindowDimensions();
+  // Fill most of the first screenful with the drawing while leaving the results
+  // below it obviously scrollable — a picture that exactly fills the viewport
+  // reads as the whole page and nobody scrolls.
+  const schematicImageHeight = Math.round(windowHeight * 0.62);
   const params = useLocalSearchParams<{ imageUri?: string; imageUris?: string; schematicId?: string }>();
 
   const [loading, setLoading] = useState(false);
@@ -274,6 +281,13 @@ export default function AnalyzeScreen() {
   const [editValues, setEditValues] = useState<Record<string, string>>({});
   const [savingEdit, setSavingEdit] = useState(false);
   const [uiPrefs, setUiPrefs] = useState(DEFAULT_UI_PREFERENCES);
+  // Preferences arrive after the screen mounts, and the scan kicks off from an
+  // effect keyed on runAnalysis. Reading them through a ref keeps that callback
+  // stable, so a preference landing mid-scan can't retrigger the analysis.
+  const uiPrefsRef = useRef(uiPrefs);
+  useEffect(() => {
+    uiPrefsRef.current = uiPrefs;
+  }, [uiPrefs]);
   const [language, setLanguage] = useState<AppLanguage>('english');
   const es = isSpanish(language);
 
@@ -417,13 +431,32 @@ export default function AnalyzeScreen() {
       console.log('[Analyze] Preparing image for upload');
       const base64 = await prepareImageForAI(imageUri);
 
-      setProgressStage(es ? 'Leyendo el esquema con la AI...' : 'Reading the schematic with AI...');
-      // Real checkpoint, then a slow creep to 90% while the model works
+      const highDetail = uiPrefsRef.current.multiPassAnalysis;
+      setProgressStage(
+        highDetail
+          ? es
+            ? 'Leyendo el esquema en alto detalle...'
+            : 'Reading the schematic in high detail...'
+          : es
+          ? 'Leyendo el esquema con la AI...'
+          : 'Reading the schematic with AI...'
+      );
+      // Real checkpoint, then a slow creep to 90% while the model works. High
+      // detail is three calls back to back, so the creep is stretched to match
+      // rather than parking the bar at 90% for most of the wait.
       animateProgressTo(0.35, 400);
-      setTimeout(() => animateProgressTo(0.9, 30000), 400);
+      setTimeout(() => animateProgressTo(0.9, highDetail ? 75000 : 30000), 400);
 
-      console.log('[Analyze] Calling OpenRouter analyzeSchematic');
-      const result: AnalysisResult = await analyzeSchematic(base64);
+      console.log('[Analyze] Calling schematic analysis', { highDetail });
+      let result: AnalysisResult;
+      let scanCoverage: MultiPassCoverage | undefined;
+      if (highDetail) {
+        const multiPass = await analyzeSchematicMultiPass(base64);
+        scanCoverage = multiPass.coverage;
+        result = multiPass;
+      } else {
+        result = await analyzeSchematic(base64);
+      }
 
       setProgressStage(es ? 'Guardando resultados...' : 'Saving results...');
       animateProgressTo(0.95, 300);
@@ -442,6 +475,7 @@ export default function AnalyzeScreen() {
         unknownSymbols: (result.unknownSymbols ?? []).map((u) => ({ ...u } as UnknownSymbol)),
         readingSteps: [],
         validationWarnings: result.validationWarnings,
+        scanCoverage,
       };
 
       await saveSchematic(newSchematic);
@@ -1313,7 +1347,7 @@ export default function AnalyzeScreen() {
       >
         {/* Image */}
         {(params.imageUri || schematic?.imageUri) && (
-          <View style={styles.imageContainer}>
+          <View style={[styles.imageContainer, { height: schematicImageHeight }]}>
             <Image
               source={resolveImageSource(params.imageUri || schematic?.imageUri)}
               style={styles.schematicImage}
@@ -1811,6 +1845,29 @@ export default function AnalyzeScreen() {
               </View>
             )}
 
+            {/* High Detail coverage — how much of the drawing the three passes actually got through */}
+            {schematic.scanCoverage && (
+              <View style={styles.warningBanner}>
+                {schematic.scanCoverage.unplacedNumbers.length > 0 || schematic.scanCoverage.unnumberedEdges > 0 ? (
+                  <AlertTriangle size={18} color={WT.yellow} />
+                ) : (
+                  <CheckCircle size={18} color={WT.green} />
+                )}
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.warningText}>
+                    {es
+                      ? `Escaneo de Alto Detalle: ${schematic.scanCoverage.numbersFound} números de cable encontrados, ${schematic.scanCoverage.numbersPlaced} colocados en un cable, ${schematic.scanCoverage.unplacedNumbers.length} sin colocar.`
+                      : `High Detail scan: found ${schematic.scanCoverage.numbersFound} wire number${schematic.scanCoverage.numbersFound === 1 ? '' : 's'}, placed ${schematic.scanCoverage.numbersPlaced}, ${schematic.scanCoverage.unplacedNumbers.length} unplaced.`}
+                  </Text>
+                  <Text style={styles.warningText}>
+                    {es
+                      ? `${schematic.scanCoverage.componentsFound} componentes y ${schematic.scanCoverage.edgesTraced} conductores rastreados.`
+                      : `${schematic.scanCoverage.componentsFound} components and ${schematic.scanCoverage.edgesTraced} conductors traced.`}
+                  </Text>
+                </View>
+              </View>
+            )}
+
             {/* Structural consistency warnings — caught deterministically, not by the AI itself */}
             {schematic.validationWarnings && schematic.validationWarnings.length > 0 && (
               <View style={styles.warningBanner}>
@@ -2171,12 +2228,17 @@ const styles = StyleSheet.create({
     gap: 12,
   },
   imageContainer: {
-    borderRadius: 14,
+    // The schematic is the thing the electrician is actually reading, so it
+    // gets the screen. Pulling back most of the scroll padding leaves a hairline
+    // gap at the edges instead of a 16px frame; the height comes from the
+    // window at render time.
+    marginHorizontal: -12,
+    marginTop: -12,
+    borderRadius: 8,
     overflow: 'hidden',
     backgroundColor: WT.bgCard,
     borderWidth: 1,
     borderColor: WT.border,
-    height: 200,
   },
   schematicImage: {
     width: '100%',

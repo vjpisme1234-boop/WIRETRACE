@@ -170,7 +170,9 @@ function AvailableWireRow({
           // Carry the row off to the right, then hand it to the list. The add
           // unmounts this row, so there is nothing to spring back.
           Animated.timing(translateX, { toValue: 400, duration: 140, useNativeDriver: false }).start(
-            () => onAddRef.current(wire.id)
+            ({ finished }) => {
+              if (finished) onAddRef.current(wire.id);
+            }
           );
           return;
         }
@@ -253,17 +255,18 @@ export default function CustomReadingOrderScreen() {
 
   const handleAdd = useCallback((id: string) => {
     LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
-    setOrder((prev) => [...prev, id]);
+    // A swipe hands the wire over 140ms after the finger lifts, so "Add all"
+    // can land first. Dedupe here rather than at each call site.
+    setOrder((prev) => (prev.includes(id) ? prev : [...prev, id]));
   }, []);
 
   const handleAddAll = useCallback(() => {
     LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
-    setOrder((prev) => [...prev, ...availableWires.map((w) => w.id)]);
+    setOrder((prev) => {
+      const seen = new Set(prev);
+      return [...prev, ...availableWires.map((w) => w.id).filter((id) => !seen.has(id))];
+    });
   }, [availableWires]);
-
-
-
-
 
   const handleRemove = useCallback((id: string) => {
     LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);

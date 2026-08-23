@@ -32,8 +32,8 @@ export function validateAnalysisConsistency(analysis: ValidationInput): string[]
   const componentLabels = new Set(analysis.components.map((c) => c.label.toUpperCase().trim()));
   const declaredPoints = new Set<string>();
   analysis.wires.forEach((w) => {
-    declaredPoints.add(w.fromPoint.trim());
-    declaredPoints.add(w.toPoint.trim());
+    declaredPoints.add((w.fromPoint || "").trim());
+    declaredPoints.add((w.toPoint || "").trim());
   });
 
   function pointIsKnown(point: string): boolean {
@@ -65,7 +65,7 @@ export function validateAnalysisConsistency(analysis: ValidationInput): string[]
   // either a real jumper or a mislabel — flag it either way so a human checks.
   const wireLabelPairs = new Map<string, Set<string>>();
   analysis.wires.forEach((w) => {
-    const pairKey = `${w.fromPoint.trim()}->${w.toPoint.trim()}`;
+    const pairKey = `${(w.fromPoint || "").trim()}->${(w.toPoint || "").trim()}`;
     if (!wireLabelPairs.has(w.label)) wireLabelPairs.set(w.label, new Set());
     wireLabelPairs.get(w.label)!.add(pairKey);
   });

@@ -43,13 +43,14 @@ import {
 } from 'lucide-react-native';
 import { WT } from '@/constants/wiretrace';
 import { AppLanguage, isSpanish, loadAppLanguage } from '@/utils/app-language';
-import { analyzeSchematic, analyzeMultipleImages, AnalysisResult, generateCustomOrderReadingSteps, generateReadingSteps, parseVoiceCorrection } from '@/utils/openrouter';
+import { analyzeSchematic, analyzeMultipleImages, AnalysisResult, generateCustomOrderReadingSteps, generateReadingSteps, parseVoiceCorrection, ReadingStepsStopReason } from '@/utils/openrouter';
 import { analyzeSchematicMultiPass, MultiPassCoverage } from '@/utils/multi-pass-analysis';
 import {
   generateSchematicName,
   getSchematic,
   saveSchematic,
   SchematicAnalysis,
+  stopReasonText,
   WireInfo,
   ComponentInfo,
   Connection,
@@ -272,6 +273,10 @@ export default function AnalyzeScreen() {
   const [searchQuery, setSearchQuery] = useState('');
   const [showStartPicker, setShowStartPicker] = useState(false);
   const [generatingSteps, setGeneratingSteps] = useState(false);
+  // Set when a generation covered only part of the drawing. The Reader is not
+  // opened on that pass — two steps on a thirty-two wire schematic look like a
+  // finished reading unless the explanation is on screen first.
+  const [stepsStopNotice, setStepsStopNotice] = useState<ReadingStepsStopReason | null>(null);
   const [aiQuestion, setAiQuestion] = useState('');
   const [aiAnswer, setAiAnswer] = useState<string | null>(null);
   const [aiSuggestions, setAiSuggestions] = useState<string | null>(null);
@@ -338,6 +343,55 @@ export default function AnalyzeScreen() {
       });
       holder.current = anim;
       anim.start();
+    },
+    []
+  );
+
+  /**
+   * Creeps toward a ceiling it never reaches, each step covering a fraction of
+   * whatever distance is left.
+   *
+   * A single long timing to 0.9 stops dead when it finishes, and an AI call
+   * that runs longer than the guess leaves the bar parked — which reads as a
+   * hang, not as waiting. This keeps inching instead: quick early, slower the
+   * longer it takes, still visibly alive after two minutes.
+   */
+  const creepProgress = useCallback(
+    (
+      value: Animated.Value,
+      holder: React.MutableRefObject<Animated.CompositeAnimation | null>,
+      from: number,
+      ceiling: number,
+      stepMs: number
+    ) => {
+      holder.current?.stop();
+      let cancelled = false;
+      let current = from;
+
+      const tick = () => {
+        if (cancelled) return;
+        current = current + (ceiling - current) * 0.075;
+        const anim = Animated.timing(value, {
+          toValue: current,
+          duration: stepMs,
+          useNativeDriver: false,
+        });
+        // Only stop() is ever called on the holder, but the type wants the full
+        // shape, so start/reset are present and inert.
+        holder.current = {
+          start: () => {},
+          stop: () => {
+            cancelled = true;
+            anim.stop();
+          },
+          reset: () => {},
+        };
+        anim.start(({ finished }) => {
+          if (finished && !cancelled) tick();
+        });
+      };
+
+      tick();
     },
     []
   );
@@ -445,7 +499,7 @@ export default function AnalyzeScreen() {
       // detail is three calls back to back, so the creep is stretched to match
       // rather than parking the bar at 90% for most of the wait.
       animateProgressTo(0.35, 400);
-      setTimeout(() => animateProgressTo(0.9, highDetail ? 75000 : 30000), 400);
+      setTimeout(() => creepProgress(progressAnim, progressAnimRef, 0.35, 0.97, highDetail ? 2600 : 1100), 400);
 
       console.log('[Analyze] Calling schematic analysis', { highDetail });
       let result: AnalysisResult;
@@ -517,7 +571,7 @@ export default function AnalyzeScreen() {
       );
 
       setProgressStage(es ? 'Leyendo las páginas con la AI...' : 'Reading the pages with AI...');
-      setTimeout(() => animateProgressTo(0.9, 40000), 300);
+      setTimeout(() => creepProgress(progressAnim, progressAnimRef, 0.35, 0.97, 1500), 300);
 
       console.log('[Analyze] Calling OpenRouter analyzeMultipleImages');
       const result: AnalysisResult = await analyzeMultipleImages(base64Images);
@@ -572,9 +626,10 @@ export default function AnalyzeScreen() {
     }
   }, [params.imageUri, params.imageUris, params.schematicId, runAnalysis, runMultiAnalysis]);
 
-  const handleStartReading = async () => {
+  const handleStartReading = async (forceRegenerate = false) => {
     if (!schematic) return;
-    console.log('[Analyze] Start Reading pressed', { direction, startPoint, specificStart, branchChoices });
+    console.log('[Analyze] Start Reading pressed', { direction, startPoint, specificStart, branchChoices, forceRegenerate });
+    setStepsStopNotice(null);
 
     if (startPoint === 'specific' && !specificStart.trim()) {
       setError(
@@ -611,7 +666,7 @@ export default function AnalyzeScreen() {
       setGeneratingSteps(true);
       resetStepsProgress();
       animateStepsProgressTo(0.15, 400);
-      setTimeout(() => animateStepsProgressTo(0.9, 20000), 400);
+      setTimeout(() => creepProgress(stepsProgressAnim, stepsProgressAnimRef, 0.15, 0.97, 900), 400);
       console.log('[Analyze] Generating custom-order reading steps', { count: orderedLabels.length });
       try {
         const steps = await generateCustomOrderReadingSteps(
@@ -628,6 +683,7 @@ export default function AnalyzeScreen() {
           ...schematic,
           readingSteps: steps,
           pendingJunction: null,
+          stopReason: null,
           readingStepsStartLabel: signature,
         };
         await saveSchematic(updated);
@@ -659,7 +715,7 @@ export default function AnalyzeScreen() {
     // directly — but a changed start point (e.g. picking a different
     // specific wire) must always regenerate, or the reader would silently
     // keep walking the old path instead of the newly chosen one.
-    if (schematic.readingSteps.length > 0 && schematic.readingStepsStartLabel === startLabel) {
+    if (!forceRegenerate && schematic.readingSteps.length > 0 && schematic.readingStepsStartLabel === startLabel) {
       router.push({
         pathname: '/reader',
         params: { schematicId: schematic.id, direction, startLabel },
@@ -681,10 +737,10 @@ export default function AnalyzeScreen() {
     setGeneratingSteps(true);
     resetStepsProgress();
     animateStepsProgressTo(0.15, 400);
-    setTimeout(() => animateStepsProgressTo(0.9, 20000), 400);
+    setTimeout(() => creepProgress(stepsProgressAnim, stepsProgressAnimRef, 0.15, 0.97, 900), 400);
     console.log('[Analyze] Generating reading steps via OpenRouter');
     try {
-      const { steps, pendingChoice } = await generateReadingSteps(
+      const { steps, pendingChoice, stopReason } = await generateReadingSteps(
         {
           wires: schematic.wires,
           components: schematic.components,
@@ -701,12 +757,27 @@ export default function AnalyzeScreen() {
         ...schematic,
         readingSteps: steps,
         pendingJunction: pendingChoice,
+        stopReason: stopReason ?? null,
         branchChoices,
         readingStepsStartLabel: startLabel,
       };
       await saveSchematic(updated);
       setSchematic(updated);
       animateStepsProgressTo(1, 250);
+
+      // Stop here when the path came up short. The steps are saved either
+      // way, so pressing Start Reading again walks straight through — but the
+      // wire counts get seen before the Reader opens, instead of the crew
+      // discovering on site that twenty-odd wires were never read.
+      if (stopReason && stopReason.wiresCovered < stopReason.wiresTotal) {
+        console.log('[Analyze] Reading stopped short', {
+          kind: stopReason.kind,
+          wiresCovered: stopReason.wiresCovered,
+          wiresTotal: stopReason.wiresTotal,
+        });
+        setStepsStopNotice(stopReason);
+        return;
+      }
 
       router.push({
         pathname: '/reader',
@@ -720,6 +791,14 @@ export default function AnalyzeScreen() {
     } finally {
       setGeneratingSteps(false);
     }
+  };
+
+  // A cut-off or half-unreadable response is a transient fault, not a property
+  // of the drawing — the same request usually comes back whole on a second try,
+  // so offer the retry rather than leaving the short reading as the only option.
+  const handleRegenerateSteps = () => {
+    console.log('[Analyze] Generate again pressed after a short reading');
+    void handleStartReading(true);
   };
 
   const handleIdentifyUnknown = (symbolId: string) => {
@@ -823,13 +902,13 @@ export default function AnalyzeScreen() {
 
     if (target.kind === 'wire') {
       const wires = schematic.wires.map((w) => (w.id === target.id ? { ...w, [field]: newValue || undefined } : w));
-      updated = { ...schematic, wires, readingSteps: [] };
+      updated = { ...schematic, wires, readingSteps: [], stopReason: null };
     } else if (target.kind === 'component') {
       const components = schematic.components.map((c) => (c.id === target.id ? { ...c, [field]: newValue } : c));
-      updated = { ...schematic, components, readingSteps: [] };
+      updated = { ...schematic, components, readingSteps: [], stopReason: null };
     } else if (target.kind === 'connection') {
       const connections = schematic.connections.map((c) => (c.id === target.id ? { ...c, [field]: newValue } : c));
-      updated = { ...schematic, connections, readingSteps: [] };
+      updated = { ...schematic, connections, readingSteps: [], stopReason: null };
     }
 
     setSchematic(updated);
@@ -1014,6 +1093,7 @@ export default function AnalyzeScreen() {
         ...updated,
         branchChoices: { ...(updated.branchChoices ?? {}), [resolvedTerminal]: resolvedTo },
         readingSteps: [],
+        stopReason: null,
       };
     }
 
@@ -1073,7 +1153,7 @@ export default function AnalyzeScreen() {
               }
             : w
         );
-        updated = { ...schematic, wires, readingSteps: [] };
+        updated = { ...schematic, wires, readingSteps: [], stopReason: null };
       } else if (editTarget.kind === 'newWire') {
         if (!editValues.label?.trim()) {
           Alert.alert(es ? 'Falta la etiqueta' : 'Missing label', es ? 'Ingresa una etiqueta para el cable.' : 'Enter a label for the wire.');
@@ -1090,14 +1170,14 @@ export default function AnalyzeScreen() {
           confidence: 1,
         };
         const wires = [...schematic.wires, newWire];
-        updated = { ...schematic, wires, wireCount: wires.length, readingSteps: [] };
+        updated = { ...schematic, wires, wireCount: wires.length, readingSteps: [], stopReason: null };
       } else if (editTarget.kind === 'component') {
         const components = schematic.components.map((c) =>
           c.id === editTarget.id
             ? { ...c, label: editValues.label, type: editValues.type, description: editValues.description }
             : c
         );
-        updated = { ...schematic, components, readingSteps: [] };
+        updated = { ...schematic, components, readingSteps: [], stopReason: null };
       } else if (editTarget.kind === 'newComponent') {
         if (!editValues.label?.trim()) {
           Alert.alert(es ? 'Falta la etiqueta' : 'Missing label', es ? 'Ingresa una etiqueta para el componente.' : 'Enter a label for the component.');
@@ -1113,7 +1193,7 @@ export default function AnalyzeScreen() {
           confidence: 1,
         };
         const components = [...schematic.components, newComponent];
-        updated = { ...schematic, components, componentCount: components.length, readingSteps: [] };
+        updated = { ...schematic, components, componentCount: components.length, readingSteps: [], stopReason: null };
       } else if (editTarget.kind === 'connection') {
         const connections = schematic.connections.map((c) =>
           c.id === editTarget.id
@@ -1126,9 +1206,9 @@ export default function AnalyzeScreen() {
               }
             : c
         );
-        updated = { ...schematic, connections, readingSteps: [] };
+        updated = { ...schematic, connections, readingSteps: [], stopReason: null };
       } else if (editTarget.kind === 'summary') {
-        updated = { ...schematic, summary: editValues.summary, readingSteps: [] };
+        updated = { ...schematic, summary: editValues.summary, readingSteps: [], stopReason: null };
       }
 
       setSchematic(updated);
@@ -1152,13 +1232,13 @@ export default function AnalyzeScreen() {
 
       if (editTarget.kind === 'wire') {
         const wires = schematic.wires.filter((w) => w.id !== editTarget.id);
-        updated = { ...schematic, wires, wireCount: wires.length, readingSteps: [] };
+        updated = { ...schematic, wires, wireCount: wires.length, readingSteps: [], stopReason: null };
       } else if (editTarget.kind === 'component') {
         const components = schematic.components.filter((c) => c.id !== editTarget.id);
-        updated = { ...schematic, components, componentCount: components.length, readingSteps: [] };
+        updated = { ...schematic, components, componentCount: components.length, readingSteps: [], stopReason: null };
       } else if (editTarget.kind === 'connection') {
         const connections = schematic.connections.filter((c) => c.id !== editTarget.id);
-        updated = { ...schematic, connections, readingSteps: [] };
+        updated = { ...schematic, connections, readingSteps: [], stopReason: null };
       }
 
       setSchematic(updated);
@@ -2088,8 +2168,32 @@ export default function AnalyzeScreen() {
               <AnalysisProgressBar progress={stepsProgressAnim} />
             </View>
           ) : null}
+
+          {/* Why the reading came up short — shown before the Reader opens */}
+          {stepsStopNotice && !generatingSteps && (
+            <View style={[styles.warningBanner, { marginBottom: 10 }]}>
+              <AlertTriangle size={18} color={WT.yellow} />
+              <View style={{ flex: 1 }}>
+                <Text style={styles.stopReasonCount}>
+                  {es
+                    ? `Solo ${stepsStopNotice.wiresCovered} de ${stepsStopNotice.wiresTotal} cables en esta lectura`
+                    : `Only ${stepsStopNotice.wiresCovered} of ${stepsStopNotice.wiresTotal} wires in this reading`}
+                </Text>
+                <Text style={styles.warningText}>{stopReasonText(stepsStopNotice, es)}</Text>
+                {stepsStopNotice.kind === 'truncated' || stepsStopNotice.kind === 'salvaged' ? (
+                  <AnimatedPressable onPress={handleRegenerateSteps} style={[styles.retryBtn, styles.stopReasonRetryBtn]}>
+                    <RefreshCw size={16} color={WT.blue} />
+                    <Text style={styles.retryBtnText}>{es ? 'Generar de nuevo' : 'Generate again'}</Text>
+                  </AnimatedPressable>
+                ) : null}
+              </View>
+            </View>
+          )}
+
           <AnimatedPressable
-            onPress={handleStartReading}
+            onPress={() => {
+              void handleStartReading();
+            }}
             style={styles.startBtn}
             disabled={generatingSteps}
             scaleValue={0.97}
@@ -2099,7 +2203,15 @@ export default function AnalyzeScreen() {
             ) : (
               <>
                 <Play size={20} color="#FFFFFF" fill="#FFFFFF" />
-                <Text style={styles.startBtnText}>{es ? 'Comenzar Lectura' : 'Start Reading'}</Text>
+                <Text style={styles.startBtnText}>
+                  {stepsStopNotice
+                    ? es
+                      ? 'Leer de todas formas'
+                      : 'Read anyway'
+                    : es
+                    ? 'Comenzar Lectura'
+                    : 'Start Reading'}
+                </Text>
               </>
             )}
           </AnimatedPressable>
@@ -2361,6 +2473,16 @@ const styles = StyleSheet.create({
     fontSize: 13,
     color: WT.yellow,
     lineHeight: 18,
+  },
+  stopReasonCount: {
+    fontSize: 15,
+    fontWeight: '700',
+    color: WT.yellow,
+    marginBottom: 2,
+  },
+  stopReasonRetryBtn: {
+    alignSelf: 'flex-start',
+    marginTop: 8,
   },
   prefBanner: {
     backgroundColor: WT.bgCardAlt,

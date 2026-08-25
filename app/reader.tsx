@@ -11,6 +11,7 @@ import { router, useFocusEffect, useLocalSearchParams } from 'expo-router';
 import { GestureDetector, Gesture } from 'react-native-gesture-handler';
 import {
   ArrowLeft,
+  AlertTriangle,
   CheckCircle,
   ChevronLeft,
   Mic,
@@ -19,7 +20,7 @@ import {
 } from 'lucide-react-native';
 import { ExpoSpeechRecognitionModule, useSpeechRecognitionEvent } from 'expo-speech-recognition';
 import { WT } from '@/constants/wiretrace';
-import { getSchematic, saveSchematic, ReadingStep, SchematicAnalysis } from '@/utils/schematic-storage';
+import { getSchematic, saveSchematic, ReadingStep, SchematicAnalysis, stopReasonText } from '@/utils/schematic-storage';
 import { answerSchematicQuestion, continueReadingSteps, generateReadingSteps } from '@/utils/openrouter';
 import { getUncoveredWires, JunctionChoice, JunctionOption, matchJunctionAnswer } from '@/utils/schematic-graph';
 import { loadTTSSettings, speakText, stopSpeech } from '@/utils/tts';
@@ -133,6 +134,7 @@ export default function ReaderScreen() {
   const [awaitingStartAnswer, setAwaitingStartAnswer] = useState(false);
   const [pendingJunction, setPendingJunction] = useState<JunctionChoice | null>(null);
   const [resolvingJunction, setResolvingJunction] = useState(false);
+  const [awaitingJunctionAnswer, setAwaitingJunctionAnswer] = useState(false);
   const [continuingUncovered, setContinuingUncovered] = useState(false);
 
   const contentOpacity = useRef(new Animated.Value(0)).current;
@@ -297,7 +299,7 @@ export default function ReaderScreen() {
     console.log('[Reader] Resolving deferred start point', { label });
     try {
       const dir: 'forward' | 'backward' = params.direction === 'backward' ? 'backward' : 'forward';
-      const { steps: newSteps, pendingChoice } = await generateReadingSteps(
+      const { steps: newSteps, pendingChoice, stopReason } = await generateReadingSteps(
         {
           wires: schematicForHelp.wires,
           components: schematicForHelp.components,
@@ -314,6 +316,7 @@ export default function ReaderScreen() {
         ...schematicForHelp,
         readingSteps: newSteps,
         pendingJunction: pendingChoice,
+        stopReason: stopReason ?? null,
         startPointAmbiguous: false,
       };
       await saveSchematic(updated);
@@ -365,7 +368,7 @@ export default function ReaderScreen() {
       const dir: 'forward' | 'backward' = params.direction === 'backward' ? 'backward' : 'forward';
       const priorGenerationOrderSteps = schematicForHelp.readingSteps;
 
-      const { steps: newSteps, pendingChoice } = await continueReadingSteps(
+      const { steps: newSteps, pendingChoice, stopReason } = await continueReadingSteps(
         {
           wires: schematicForHelp.wires,
           components: schematicForHelp.components,
@@ -385,6 +388,7 @@ export default function ReaderScreen() {
         ...schematicForHelp,
         readingSteps: updatedGenerationOrderSteps,
         pendingJunction: pendingChoice,
+        stopReason: stopReason ?? null,
         branchChoices: updatedBranchChoices,
       };
       await saveSchematic(updated);
@@ -406,11 +410,27 @@ export default function ReaderScreen() {
       );
     } finally {
       setResolvingJunction(false);
+      // Clear on the way out whether or not the branch resolved. Leaving it set
+      // would keep the chooser on screen with the steps hidden behind it, and
+      // the chooser has no back control — the only escape is this line. Pressing
+      // next at the last step calls askJunctionQuestion again, so a failed
+      // attempt is still retryable from the steps.
+      setAwaitingJunctionAnswer(false);
     }
   }, [schematicForHelp, pendingJunction, params.direction, speechLanguage]);
 
   const askJunctionQuestion = useCallback(async () => {
     if (!pendingJunction) return;
+    // A split with nothing to choose between cannot be answered by voice or by
+    // tap. Treat it as the end of the readable path rather than prompting for
+    // an answer that can never arrive.
+    if (pendingJunction.options.length === 0) {
+      console.warn('[Reader] Pending junction has no options — ending the reading here');
+      setAwaitingJunctionAnswer(false);
+      stopSpeech();
+      setCompleted(true);
+      return;
+    }
     const ordinalsEn = ['first', 'second', 'third', 'fourth'];
     const ordinalsEs = ['primera', 'segunda', 'tercera', 'cuarta'];
     const optionsText = pendingJunction.options
@@ -426,10 +446,17 @@ export default function ReaderScreen() {
         ? `El camino se divide aquí. ${optionsText}. Di el número del cable, o di primera o segunda.`
         : `The path splits here. ${optionsText}. Say the wire number, or say first or second.`;
 
+    // Never choose a branch on the electrician's behalf. Picking one and
+    // reading it out sounds exactly like a verified path, and the whole reason
+    // step generation stops at a split is that guessing which wire to follow is
+    // not something a schematic reader may do. Without voice the options are
+    // shown as buttons instead.
+    setAwaitingJunctionAnswer(true);
+
     const canListen = voiceNextEnabled && ExpoSpeechRecognitionModule.isRecognitionAvailable();
     if (!canListen) {
-      console.log('[Reader] Voice unavailable for junction prompt — defaulting to first option');
-      if (pendingJunction.options[0]) void resolveJunctionChoice(pendingJunction.options[0]);
+      console.log('[Reader] Voice unavailable for junction prompt — waiting for a tap');
+      setVoiceStatus(speechLanguage === 'spanish' ? 'Elige un cable' : 'Choose a wire');
       return;
     }
 
@@ -444,6 +471,19 @@ export default function ReaderScreen() {
     return getUncoveredWires(schematicForHelp.wires, steps);
   }, [completed, schematicForHelp, steps]);
 
+  // A reading that was cut off, rescued from a broken response, or that only
+  // walked one branch is not a finished schematic. Kept separate from the
+  // branch case, which stops on purpose and is resolved from the step screen.
+  // A stop that was later read past covers everything in the end, so the
+  // steps on screen — not the stored counts — decide whether it is still short.
+  const partialStop = useMemo(() => {
+    const reason = schematicForHelp?.stopReason;
+    if (!reason || reason.kind === 'branch') return null;
+    if (reason.wiresCovered >= reason.wiresTotal) return null;
+    if (uncoveredWires.length === 0) return null;
+    return reason;
+  }, [schematicForHelp, uncoveredWires]);
+
   const handleContinueUncovered = useCallback(async () => {
     if (!schematicForHelp || uncoveredWires.length === 0) return;
     const nextLabel = uncoveredWires[0].label;
@@ -454,7 +494,7 @@ export default function ReaderScreen() {
     try {
       const dir: 'forward' | 'backward' = params.direction === 'backward' ? 'backward' : 'forward';
       const priorGenerationOrderSteps = schematicForHelp.readingSteps;
-      const { steps: newSteps, pendingChoice } = await generateReadingSteps(
+      const { steps: newSteps, pendingChoice, stopReason } = await generateReadingSteps(
         {
           wires: schematicForHelp.wires,
           components: schematicForHelp.components,
@@ -472,6 +512,7 @@ export default function ReaderScreen() {
         ...schematicForHelp,
         readingSteps: updatedGenerationOrderSteps,
         pendingJunction: pendingChoice,
+        stopReason: stopReason ?? null,
       };
       await saveSchematic(updated);
       setSchematicForHelp(updated);
@@ -792,12 +833,75 @@ export default function ReaderScreen() {
     );
   }
 
-  if (awaitingStartAnswer || (steps.length === 0 && pendingJunction) || resolvingJunction) {
+  if (awaitingStartAnswer || awaitingJunctionAnswer || (steps.length === 0 && pendingJunction) || resolvingJunction) {
     return (
       <View style={[styles.root, styles.centered, { paddingTop: insets.top, paddingBottom: insets.bottom }]}>
         <Mic size={32} color={listeningForVoice ? WT.green : WT.blue} />
         <Text style={styles.loadingText}>{voiceStatus}</Text>
         {voiceError ? <Text style={styles.voiceErrorText}>{voiceError}</Text> : null}
+
+        {/* options comes straight out of model JSON, so an empty array is
+            possible — without this guard the chooser would render a heading and
+            no buttons, which neither a tap nor a voice answer could ever clear. */}
+        {pendingJunction && pendingJunction.options.length > 0 && !resolvingJunction && (
+          <View style={styles.junctionBox}>
+            <Text style={styles.junctionTitle}>
+              {speechLanguage === 'spanish'
+                ? 'El camino se divide en ' + pendingJunction.terminal
+                : 'The path splits at ' + pendingJunction.terminal}
+            </Text>
+            <Text style={styles.junctionSub}>
+              {speechLanguage === 'spanish'
+                ? steps.length + ' de ' + (schematicForHelp?.wires.length ?? steps.length) + ' cables hasta aquí. Elige por cuál cable seguir.'
+                : steps.length + ' of ' + (schematicForHelp?.wires.length ?? steps.length) + ' wires so far. Choose which wire to follow.'}
+            </Text>
+            {pendingJunction.options.map((opt, i) => (
+              <AnimatedPressable
+                key={opt.wireLabel + '-' + opt.to + '-' + i}
+                onPress={() => {
+                  // A second tap while the first is still running would append
+                  // two branches and save a choice that disagrees with what is
+                  // on screen, so the in-flight flag gates re-entry.
+                  if (resolvingJunction) return;
+                  console.log('[Reader] Junction option tapped', { wireLabel: opt.wireLabel, to: opt.to });
+                  stopVoiceListening();
+                  // The question is still being spoken, and its onDone reopens
+                  // the mic in junction mode — a stray word could then answer a
+                  // split nobody was asked about.
+                  stopSpeech();
+                  void resolveJunctionChoice(opt);
+                }}
+                style={styles.junctionOptBtn}
+                scaleValue={0.97}
+              >
+                <Text style={styles.junctionOptWire}>
+                  {speechLanguage === 'spanish' ? 'Cable ' + opt.wireLabel : 'Wire ' + opt.wireLabel}
+                </Text>
+                <Text style={styles.junctionOptTo} numberOfLines={2}>
+                  {opt.description || opt.to}
+                </Text>
+              </AnimatedPressable>
+            ))}
+
+            <AnimatedPressable
+              onPress={() => {
+                console.log('[Reader] Junction dismissed — keeping the steps already read');
+                stopVoiceListening();
+                stopSpeech();
+                setAwaitingJunctionAnswer(false);
+              }}
+              style={styles.junctionSkipBtn}
+              scaleValue={0.97}
+            >
+              <Text style={styles.junctionSkipText}>
+                {speechLanguage === 'spanish'
+                  ? 'Parar aquí — quedarme con estos pasos'
+                  : 'Stop here — keep the steps I have'}
+              </Text>
+            </AnimatedPressable>
+          </View>
+        )}
+
         {!listeningForVoice && !resolvingJunction && voiceNextEnabled && (
           <AnimatedPressable
             onPress={() => (awaitingStartAnswer ? askForStartPoint() : askJunctionQuestion())}
@@ -814,14 +918,25 @@ export default function ReaderScreen() {
   if (completed) {
     return (
       <View style={[styles.root, styles.centered, { paddingTop: insets.top, paddingBottom: insets.bottom }]}>
-        <View style={styles.completedIcon}>
-          <CheckCircle size={48} color={WT.green} />
+        <View style={[styles.completedIcon, partialStop && styles.completedIconPartial]}>
+          {partialStop ? <AlertTriangle size={48} color={WT.yellow} /> : <CheckCircle size={48} color={WT.green} />}
         </View>
-        <Text style={styles.completedTitle}>{speechLanguage === 'spanish' ? '¡Esquema completado!' : 'Schematic Complete!'}</Text>
+        <Text style={[styles.completedTitle, partialStop && styles.completedTitlePartial]}>
+          {partialStop
+            ? speechLanguage === 'spanish'
+              ? `Camino completo — ${partialStop.wiresCovered} de ${partialStop.wiresTotal} cables`
+              : `Path complete — ${partialStop.wiresCovered} of ${partialStop.wiresTotal} wires`
+            : speechLanguage === 'spanish'
+            ? '¡Esquema completado!'
+            : 'Schematic Complete!'}
+        </Text>
         <Text style={styles.completedSub}>
           {steps.length}
           {speechLanguage === 'spanish' ? ' pasos leídos correctamente' : ' steps read successfully'}
         </Text>
+        {partialStop && (
+          <Text style={styles.completedStopReason}>{stopReasonText(partialStop, speechLanguage === 'spanish')}</Text>
+        )}
         {uncoveredWires.length > 0 && (
           <View style={styles.uncoveredBox}>
             <Text style={styles.uncoveredTitle}>
@@ -1336,6 +1451,54 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: WT.border,
   },
+  junctionBox: {
+    alignSelf: 'stretch',
+    marginTop: 20,
+    marginHorizontal: 20,
+    padding: 16,
+    borderRadius: 14,
+    backgroundColor: WT.bgCard,
+    borderWidth: 1,
+    borderColor: WT.border,
+    gap: 10,
+  },
+  junctionTitle: {
+    fontSize: 17,
+    fontWeight: '700',
+    color: WT.textPrimary,
+  },
+  junctionSub: {
+    fontSize: 14,
+    color: WT.textSecondary,
+    lineHeight: 20,
+  },
+  junctionOptBtn: {
+    paddingVertical: 14,
+    paddingHorizontal: 14,
+    borderRadius: 12,
+    backgroundColor: WT.bgCardAlt,
+    borderWidth: 1,
+    borderColor: WT.blue,
+    gap: 3,
+  },
+  junctionOptWire: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: WT.blue,
+  },
+  junctionOptTo: {
+    fontSize: 14,
+    color: WT.textSecondary,
+  },
+  junctionSkipBtn: {
+    paddingVertical: 12,
+    alignItems: 'center',
+  },
+  junctionSkipText: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: WT.textSecondary,
+  },
   voiceRetryBtn: {
     width: 44,
     height: 44,
@@ -1372,9 +1535,25 @@ const styles = StyleSheet.create({
     color: WT.textPrimary,
     letterSpacing: -0.3,
   },
+  completedIconPartial: {
+    backgroundColor: WT.yellowMuted,
+  },
+  completedTitlePartial: {
+    fontSize: 22,
+    textAlign: 'center',
+    paddingHorizontal: 16,
+  },
   completedSub: {
     fontSize: 16,
     color: WT.textSecondary,
+  },
+  completedStopReason: {
+    fontSize: 14,
+    color: WT.yellow,
+    lineHeight: 20,
+    textAlign: 'center',
+    marginTop: 10,
+    paddingHorizontal: 24,
   },
   uncoveredBox: {
     backgroundColor: WT.bgCard,

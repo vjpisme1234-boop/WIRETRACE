@@ -1,5 +1,6 @@
 import * as FileSystem from 'expo-file-system/legacy';
 import type { MultiPassCoverage } from '@/utils/multi-pass-analysis';
+import type { ReadingStepsStopReason } from '@/utils/openrouter';
 import type { JunctionChoice } from '@/utils/schematic-graph';
 
 const SCHEMATICS_DIR = FileSystem.documentDirectory + 'schematics/';
@@ -71,6 +72,8 @@ export interface SchematicAnalysis {
   startPointAmbiguous?: boolean;
   /** Set when step generation stopped at a branch the user hasn't resolved yet. */
   pendingJunction?: JunctionChoice | null;
+  /** Why readingSteps end where they do, when they cover less than the whole drawing. Saved with the steps so the Reader and the saved-schematic list can explain a short reading too, not just the screen that generated it. Set back to null every time steps are regenerated or cleared — a reason describing a stop that no longer applies is worse than no reason at all. */
+  stopReason?: ReadingStepsStopReason | null;
   /** Path choices the user has made at branch terminals: terminal -> chosen "to". */
   branchChoices?: Record<string, string>;
   /** The start label (wire/component name, "Line 1", "Last line") that readingSteps was generated for — lets the caller tell whether cached steps still match the user's current start-point selection. */
@@ -89,6 +92,29 @@ export interface SchematicAnalysis {
   nodePositions?: Record<string, { x: number; y: number }>;
   /** User-dragged positions for note annotation bubbles in the Schematic View, keyed by wire/component id. */
   notePositions?: Record<string, { x: number; y: number }>;
+}
+
+/**
+ * The stop-reason sentence in the crew's language. The English wording is
+ * already written for display, so it is used as-is; Spanish is rebuilt from
+ * the same kind and wire counts rather than falling back to English, because
+ * the reason a reading stopped short is exactly the part a Spanish-reading
+ * electrician cannot afford to miss. Kept beside the stored field because both
+ * the analyze screen and the Reader's completion screen show this sentence.
+ */
+export function stopReasonText(reason: ReadingStepsStopReason, isSpanish: boolean): string {
+  if (!isSpanish) return reason.message;
+  const counts = `${reason.wiresCovered} de ${reason.wiresTotal} cables`;
+  switch (reason.kind) {
+    case 'truncated':
+      return `La IA llegó a su límite de longitud a mitad del recorrido, así que esta lectura cubre solo ${counts}. Genérala de nuevo, o lee el resto en una segunda pasada desde donde termina esta.`;
+    case 'salvaged':
+      return `Parte de la respuesta de la IA llegó ilegible. Se recuperaron ${counts}, y cualquier bifurcación donde se haya detenido se perdió con el resto — genérala de nuevo para el recorrido completo.`;
+    case 'branch':
+      return `El recorrido se divide en una bifurcación, así que la lectura se detiene ahí en vez de adivinar qué cable seguir — ${counts} hasta ahora. Elige un cable en la bifurcación y continúa.`;
+    case 'partial-coverage':
+      return `Este recorrido cubre ${counts} — los demás se ramifican en otra parte del dibujo y pueden leerse en una segunda pasada.`;
+  }
 }
 
 async function ensureDir(): Promise<void> {

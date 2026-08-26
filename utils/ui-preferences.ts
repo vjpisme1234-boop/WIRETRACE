@@ -29,7 +29,10 @@ export interface UIPreferences {
 }
 
 export const DEFAULT_UI_PREFERENCES: UIPreferences = {
-  visualMode: 'normalLight',
+  // Highlight (high contrast) out of the box. A schematic gets read on a job
+  // site in daylight or under bad shop lighting, where the softer mode is the
+  // one that loses.
+  visualMode: 'highContrast',
   layoutPreset: 'industrial',
   // Default to the free built-in provider explicitly, rather than "Auto",
   // so a fresh install clearly shows an active provider instead of a vague

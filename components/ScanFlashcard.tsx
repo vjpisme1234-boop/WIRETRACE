@@ -1,12 +1,10 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { Pressable, StyleSheet, Text, View } from 'react-native';
-import { GraduationCap } from 'lucide-react-native';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Animated, Easing, Pressable, StyleSheet, Text } from 'react-native';
+import { Sparkles } from 'lucide-react-native';
 import { WT } from '@/constants/wiretrace';
-import { SYMBOL_CATEGORIES, SymbolEntry } from '@/app/symbol-dictionary';
+import { SCAN_FACTS } from '@/constants/scan-facts';
 
-// Something to read while the AI works, drawn from the symbol dictionary the
-// app already ships so there is no second body of content to maintain and it
-// is bilingual for free.
+// Something to read while the AI works.
 //
 // This exists to make an ordinary wait pass more pleasantly. It is deliberately
 // not a substitute for the slow-scan notice: a card that keeps cheerfully
@@ -14,9 +12,17 @@ import { SYMBOL_CATEGORIES, SymbolEntry } from '@/app/symbol-dictionary';
 // and says the honest thing.
 
 const ROTATE_EVERY_MS = 14_000;
+const PULSE_MS = 1600;
 
-function flattenSymbols(): SymbolEntry[] {
-  return SYMBOL_CATEGORIES.flatMap((category) => category.symbols);
+// Shuffled per scan so a repeat scan does not open on the same fact, and so
+// the order is not obviously a fixed list on a long wait.
+function shuffled<T>(items: T[]): T[] {
+  const copy = [...items];
+  for (let i = copy.length - 1; i > 0; i -= 1) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [copy[i], copy[j]] = [copy[j], copy[i]];
+  }
+  return copy;
 }
 
 interface Props {
@@ -24,77 +30,95 @@ interface Props {
 }
 
 export default function ScanFlashcard({ es }: Props) {
-  const symbols = useMemo(flattenSymbols, []);
-  const [index, setIndex] = useState(() => Math.floor(Math.random() * Math.max(symbols.length, 1)));
-  const [revealed, setRevealed] = useState(false);
+  const facts = useMemo(() => shuffled(SCAN_FACTS), []);
+  const [index, setIndex] = useState(0);
+  const pulse = useRef(new Animated.Value(0)).current;
+
+  const next = useCallback(() => {
+    setIndex((i) => (i + 1) % facts.length);
+  }, [facts.length]);
+
+  // Thick blue edge that breathes, so the card reads as alive rather than as
+  // another static panel on a screen that is already mostly waiting.
+  useEffect(() => {
+    const loop = Animated.loop(
+      Animated.sequence([
+        Animated.timing(pulse, {
+          toValue: 1,
+          duration: PULSE_MS,
+          easing: Easing.inOut(Easing.ease),
+          useNativeDriver: false,
+        }),
+        Animated.timing(pulse, {
+          toValue: 0,
+          duration: PULSE_MS,
+          easing: Easing.inOut(Easing.ease),
+          useNativeDriver: false,
+        }),
+      ])
+    );
+    loop.start();
+    return () => loop.stop();
+  }, [pulse]);
 
   useEffect(() => {
-    if (symbols.length < 2) return;
-    const timer = setInterval(() => {
-      // Step by a random stride so a long wait does not walk the list in
-      // order, which would give away that it is a fixed list.
-      setIndex((i) => (i + 1 + Math.floor(Math.random() * 3)) % symbols.length);
-      setRevealed(false);
-    }, ROTATE_EVERY_MS);
+    if (facts.length < 2) return;
+    const timer = setInterval(next, ROTATE_EVERY_MS);
     return () => clearInterval(timer);
-  }, [symbols.length]);
+  }, [facts.length, next]);
 
-  const reveal = useCallback(() => setRevealed((r) => !r), []);
+  if (facts.length === 0) return null;
 
-  if (symbols.length === 0) return null;
-  const symbol = symbols[index % symbols.length];
-  const label = es ? symbol.labelEs : symbol.label;
-  const description = es ? symbol.descriptionEs : symbol.description;
-  const wiring = es ? symbol.wiringEs : symbol.wiring;
+  const borderColor = pulse.interpolate({
+    inputRange: [0, 1],
+    outputRange: [WT.blueDim, WT.blue],
+  });
 
   return (
-    <Pressable onPress={reveal} style={styles.card} accessibilityRole="button">
-      <View style={styles.header}>
-        <GraduationCap size={14} color={WT.blueMuted} />
-        <Text style={styles.headerText}>
-          {es ? 'Mientras esperas' : 'While you wait'}
-        </Text>
-      </View>
+    <Animated.View style={[styles.card, { borderColor }]}>
+      <Pressable onPress={next} accessibilityRole="button" style={styles.pressable}>
+        <Animated.View style={styles.header}>
+          <Sparkles size={14} color={WT.pink} />
+          <Text style={styles.headerText}>
+            {es ? 'Mientras esperas' : 'While you wait'}
+          </Text>
+        </Animated.View>
 
-      <Text style={styles.label}>{label}</Text>
-      {symbol.code ? <Text style={styles.code}>{symbol.code}</Text> : null}
+        <Text style={styles.fact}>{es ? facts[index].es : facts[index].en}</Text>
 
-      {revealed ? (
-        <View style={styles.revealBlock}>
-          <Text style={styles.description}>{description}</Text>
-          {wiring ? <Text style={styles.wiring}>{wiring}</Text> : null}
-        </View>
-      ) : (
         <Text style={styles.prompt}>
-          {es ? 'Toca para ver qué hace' : 'Tap to see what it does'}
+          {es ? 'Toca para otro dato' : 'Tap for another'}
         </Text>
-      )}
-    </Pressable>
+      </Pressable>
+    </Animated.View>
   );
 }
 
 const styles = StyleSheet.create({
   card: {
     marginTop: 16,
-    padding: 14,
-    borderRadius: 12,
+    borderRadius: 14,
     backgroundColor: WT.bgCardAlt,
-    borderWidth: 1,
-    borderColor: WT.border,
-    gap: 4,
+    borderWidth: 4,
   },
-  header: { flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 2 },
+  pressable: { padding: 16, gap: 8 },
+  header: { flexDirection: 'row', alignItems: 'center', gap: 6 },
   headerText: {
-    color: WT.blueMuted,
+    color: WT.pink,
     fontSize: 11,
     fontWeight: '700',
     letterSpacing: 0.6,
     textTransform: 'uppercase',
   },
-  label: { color: WT.textPrimary, fontSize: 15, fontWeight: '700' },
-  code: { color: WT.textTertiary, fontSize: 12, fontFamily: 'monospace' },
-  prompt: { color: WT.textTertiary, fontSize: 12, marginTop: 6, fontStyle: 'italic' },
-  revealBlock: { marginTop: 6, gap: 6 },
-  description: { color: WT.textSecondary, fontSize: 13, lineHeight: 18 },
-  wiring: { color: WT.yellowMuted, fontSize: 12, lineHeight: 17 },
+  fact: {
+    color: WT.pinkBright,
+    fontSize: 15,
+    lineHeight: 21,
+    fontWeight: '600',
+  },
+  prompt: {
+    color: WT.pinkMuted,
+    fontSize: 12,
+    fontStyle: 'italic',
+  },
 });

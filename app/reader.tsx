@@ -1039,7 +1039,7 @@ export default function ReaderScreen() {
         >
           <View style={[styles.modeBadge, isLightMode && styles.modeBadgeLight, isHighContrast && styles.modeBadgeHighContrast, isDark && styles.modeBadgeDark]}>
             <Text style={[styles.modeBadgeText, isLightMode && styles.modeBadgeTextLight, isHighContrast && styles.modeBadgeTextHighContrast, isDark && styles.modeBadgeTextDark]}>
-              {uiPrefs.layoutPreset.toUpperCase()} • {uiPrefs.visualMode === 'normalLight' ? 'NORMAL LIGHT' : uiPrefs.visualMode === 'highContrast' ? 'HIGH CONTRAST' : 'DARK'}
+              {uiPrefs.layoutPreset.toUpperCase()} • {uiPrefs.visualMode === 'normalLight' ? 'LIGHT' : uiPrefs.visualMode === 'highContrast' ? 'HIGHLIGHT' : 'DARK'}
             </Text>
           </View>
           {step.wireLabel && (

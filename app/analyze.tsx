@@ -1567,8 +1567,8 @@ export default function AnalyzeScreen() {
               <Text style={[styles.prefBannerText, isLightMode && styles.prefBannerTextDark]}>
                 {es ? 'Visual: ' : 'Visual: '}
                 {es
-                  ? uiPrefs.visualMode === 'normalLight' ? 'Luz Normal' : uiPrefs.visualMode === 'highContrast' ? 'Alto Contraste' : 'Oscuro'
-                  : uiPrefs.visualMode === 'normalLight' ? 'Normal Light' : uiPrefs.visualMode === 'highContrast' ? 'High Contrast' : 'Dark'}
+                  ? uiPrefs.visualMode === 'normalLight' ? 'Claro' : uiPrefs.visualMode === 'highContrast' ? 'Resaltado' : 'Oscuro'
+                  : uiPrefs.visualMode === 'normalLight' ? 'Light' : uiPrefs.visualMode === 'highContrast' ? 'Highlight' : 'Dark'}
                 {' • '}
                 {es ? 'Diseño: ' : 'Layout: '}
                 {es

@@ -18,7 +18,7 @@ import PulsingLogo from '@/components/PulsingLogo';
 // Symbol dictionary data
 // ---------------------------------------------------------------------------
 
-export interface SymbolEntry {
+interface SymbolEntry {
   label: string;
   labelEs: string;
   code: string;
@@ -28,13 +28,13 @@ export interface SymbolEntry {
   wiringEs?: string;
 }
 
-export interface SymbolCategory {
+interface SymbolCategory {
   title: string;
   titleEs: string;
   symbols: SymbolEntry[];
 }
 
-export const SYMBOL_CATEGORIES: SymbolCategory[] = [
+const SYMBOL_CATEGORIES: SymbolCategory[] = [
   {
     title: 'Power Sources & Distribution',
     titleEs: 'Fuentes de Alimentación y Distribución',

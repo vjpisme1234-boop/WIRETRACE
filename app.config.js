@@ -33,12 +33,25 @@ module.exports = {
       },
       package: "com.vjpisme_wiretrace",
       versionCode: 11,
+      // Schematics arrive through the system photo picker and the document
+      // picker, both of which grant access to the one file the user chose.
+      // Neither needs a storage permission, and asking for one puts the app
+      // in front of Play's photo-and-video policy review for nothing.
       permissions: [
         "android.permission.CAMERA",
+        "android.permission.RECORD_AUDIO",
+      ],
+      // Libraries declare these in their own manifests, so dropping them from
+      // the list above is not enough to keep them out of the merged manifest.
+      blockedPermissions: [
         "android.permission.READ_MEDIA_IMAGES",
+        "android.permission.READ_MEDIA_VIDEO",
         "android.permission.READ_EXTERNAL_STORAGE",
         "android.permission.WRITE_EXTERNAL_STORAGE",
-        "android.permission.RECORD_AUDIO",
+        // React Native declares this in its debug-only manifest for the dev
+        // overlay; it drifted into the main manifest and has been shipping in
+        // release builds ever since.
+        "android.permission.SYSTEM_ALERT_WINDOW",
       ],
     },
     web: {

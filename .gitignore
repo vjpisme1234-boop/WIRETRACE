@@ -80,3 +80,6 @@ builds/
 # Claude Code local tooling
 .agents/
 skills-lock.json
+
+# Nested clone of this repo — must never ship in a build upload
+/WIRETRACE/

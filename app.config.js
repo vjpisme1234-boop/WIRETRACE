@@ -32,7 +32,7 @@ module.exports = {
         backgroundColor: "#FFFFFF",
       },
       package: "com.vjpisme_wiretrace",
-      versionCode: 11,
+      versionCode: 12,
       // Schematics arrive through the system photo picker and the document
       // picker, both of which grant access to the one file the user chose.
       // Neither needs a storage permission, and asking for one puts the app

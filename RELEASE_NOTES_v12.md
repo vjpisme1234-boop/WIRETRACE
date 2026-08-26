@@ -1,4 +1,4 @@
-# WireTrace AI — 1.0.0 (versionCode 11) — First release
+# WireTrace AI — 1.0.0 (versionCode 12) — First release
 
 ## Play Store "What's new" (paste this)
 

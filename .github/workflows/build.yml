@@ -1,8 +1,6 @@
 name: EAS Build – APK, AAB & IPA
 
 on:
-  push:
-    branches: [main]
   workflow_dispatch:
     inputs:
       profile:
@@ -24,7 +22,7 @@ jobs:
   build-android-apk:
     name: Android – Signed APK
     runs-on: ubuntu-latest
-    if: ${{ github.event.inputs.profile == 'production-apk' || github.event.inputs.profile == '' }}
+    if: ${{ github.event.inputs.profile == 'production-apk' }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -92,7 +90,6 @@ jobs:
           eas build \
             --platform android \
             --profile production \
-            --type app-bundle \
             --non-interactive \
             --no-wait
 

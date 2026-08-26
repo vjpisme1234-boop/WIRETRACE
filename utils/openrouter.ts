@@ -102,6 +102,144 @@ interface ProviderResponse {
   truncated: boolean;
 }
 
+// ---------------------------------------------------------------------------
+// Request deadlines and cancellation
+//
+// fetch never rejects when a socket simply goes quiet, which is the ordinary
+// failure on one bar of signal inside a steel building. With no deadline the
+// scan hangs forever and the progress bar sits near its ceiling with nothing
+// to tell the user. So every request gets a deadline, and the scan as a whole
+// gets a token the UI can pull when someone gives up waiting.
+//
+// The token lives at module scope rather than being threaded through every
+// analyze function: a scan is always one at a time (the analyze screen gates
+// on `loading`), and passing a signal through thirteen exported functions
+// would touch far more code than this fix is worth.
+// ---------------------------------------------------------------------------
+
+/** How long a single API call may run before it is treated as dead. */
+export const REQUEST_TIMEOUT_MS = 180_000;
+
+/** Worth one automatic retry: rate limits and transient server faults. */
+const RETRYABLE_STATUSES = new Set([429, 500, 502, 503, 504]);
+
+export class ScanCancelledError extends Error {
+  constructor() {
+    super('Scan cancelled');
+    this.name = 'ScanCancelledError';
+  }
+}
+
+export class ScanTimeoutError extends Error {
+  constructor(provider: string) {
+    super(`${provider} stopped responding`);
+    this.name = 'ScanTimeoutError';
+  }
+}
+
+let activeScan: AbortController | null = null;
+
+/** Opens a cancellable scan. Pair with endScanSession when it settles. */
+export function beginScanSession(): void {
+  activeScan?.abort();
+  activeScan = new AbortController();
+}
+
+export function endScanSession(): void {
+  activeScan = null;
+}
+
+/** Pulled by the UI when the user gives up on a slow scan. */
+export function cancelActiveScan(): void {
+  activeScan?.abort();
+  activeScan = null;
+}
+
+const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
+
+/**
+ * fetch with a deadline, one retry on transient failure, and cancellation.
+ *
+ * An abort happens for two different reasons and the caller has to tell them
+ * apart: a user cancel is not a failure worth showing as one.
+ */
+async function fetchWithDeadline(
+  url: string,
+  init: RequestInit,
+  provider: string
+): Promise<Response> {
+  let lastError: unknown;
+
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    if (activeScan?.signal.aborted) throw new ScanCancelledError();
+
+    const controller = new AbortController();
+    let timedOut = false;
+    const timer = setTimeout(() => {
+      timedOut = true;
+      controller.abort();
+    }, REQUEST_TIMEOUT_MS);
+    const onScanAbort = () => controller.abort();
+    activeScan?.signal.addEventListener('abort', onScanAbort);
+
+    try {
+      const response = await fetch(url, { ...init, signal: controller.signal });
+
+      if (RETRYABLE_STATUSES.has(response.status) && attempt === 0) {
+        const retryAfter = Number(response.headers.get('retry-after'));
+        const waitMs =
+          Number.isFinite(retryAfter) && retryAfter > 0
+            ? Math.min(retryAfter * 1000, 10_000)
+            : 2_000;
+        console.warn(`[${provider}] ${response.status} - retrying once in ${waitMs}ms`);
+        await sleep(waitMs);
+        continue;
+      }
+
+      return response;
+    } catch (e) {
+      lastError = e;
+      if (timedOut) throw new ScanTimeoutError(provider);
+      if (activeScan?.signal.aborted) throw new ScanCancelledError();
+      // A dropped connection earns one retry; a second failure is real.
+      if (attempt === 0) {
+        console.warn(`[${provider}] request failed, retrying once`, e);
+        await sleep(1_000);
+        continue;
+      }
+      throw e;
+    } finally {
+      clearTimeout(timer);
+      activeScan?.signal.removeEventListener('abort', onScanAbort);
+    }
+  }
+
+  throw lastError instanceof Error ? lastError : new Error(`${provider} request failed`);
+}
+
+/** Turns an HTTP failure into something an electrician can act on. */
+function describeHttpFailure(provider: string, status: number, body: string): Error {
+  if (status === 401) {
+    return new Error(
+      `${provider} API error 401 (Unauthorized). Verify your ${provider} key in Settings.`
+    );
+  }
+  if (status === 429) {
+    return new Error(
+      `${provider} is busy right now. Wait a minute and try again, or add your own API key in Settings.`
+    );
+  }
+  if (status === 402 || status === 403) {
+    return new Error(
+      `${provider} refused the request (${status}). If you are using your own key, check its billing and permissions.`
+    );
+  }
+  if (status >= 500) {
+    return new Error(`${provider} is having trouble right now (${status}). Try again in a moment.`);
+  }
+  return new Error(`${provider} API error ${status}: ${body}`);
+}
+
 async function callOpenAICompatible(opts: {
   provider: string;
   url: string;
@@ -114,23 +252,24 @@ async function callOpenAICompatible(opts: {
   const { provider, url, apiKey, model, messages, maxTokens, extraHeaders } = opts;
   console.log(`[${provider}] Making API request`, { model, messageCount: messages.length });
 
-  const response = await fetch(url, {
-    method: 'POST',
-    headers: {
-      Authorization: `Bearer ${apiKey}`,
-      'Content-Type': 'application/json',
-      ...extraHeaders,
+  const response = await fetchWithDeadline(
+    url,
+    {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        'Content-Type': 'application/json',
+        ...extraHeaders,
+      },
+      body: JSON.stringify({ model, messages, max_tokens: maxTokens }),
     },
-    body: JSON.stringify({ model, messages, max_tokens: maxTokens }),
-  });
+    provider
+  );
 
   if (!response.ok) {
     const errorText = await response.text();
     console.error(`[${provider}] API error`, { status: response.status, body: errorText });
-    if (response.status === 401) {
-      throw new Error(`${provider} API error 401 (Unauthorized). Verify your ${provider} key in Settings.`);
-    }
-    throw new Error(`${provider} API error ${response.status}: ${errorText}`);
+    throw describeHttpFailure(provider, response.status, errorText);
   }
 
   const data = await response.json();
@@ -215,28 +354,29 @@ async function callAnthropic(
 
   console.log('[Anthropic] Making API request', { model, messageCount: conversation.length });
 
-  const response = await fetch('https://api.anthropic.com/v1/messages', {
-    method: 'POST',
-    headers: {
-      'x-api-key': apiKey,
-      'anthropic-version': '2023-06-01',
-      'content-type': 'application/json',
+  const response = await fetchWithDeadline(
+    'https://api.anthropic.com/v1/messages',
+    {
+      method: 'POST',
+      headers: {
+        'x-api-key': apiKey,
+        'anthropic-version': '2023-06-01',
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify({
+        model,
+        max_tokens: maxTokens,
+        ...(systemMessage ? { system: systemMessage.content } : {}),
+        messages: conversation,
+      }),
     },
-    body: JSON.stringify({
-      model,
-      max_tokens: maxTokens,
-      ...(systemMessage ? { system: systemMessage.content } : {}),
-      messages: conversation,
-    }),
-  });
+    'Anthropic'
+  );
 
   if (!response.ok) {
     const errorText = await response.text();
     console.error('[Anthropic] API error', { status: response.status, body: errorText });
-    if (response.status === 401) {
-      throw new Error('Anthropic API error 401 (Unauthorized). Verify your Anthropic key in Settings.');
-    }
-    throw new Error(`Anthropic API error ${response.status}: ${errorText}`);
+    throw describeHttpFailure('Anthropic', response.status, errorText);
   }
 
   const data = await response.json();
@@ -340,6 +480,14 @@ async function runWithFallback(
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       console.error('[AI] Provider failed', { provider: attempt.name, model: attempt.model, message });
+      // Neither of these means "this provider is bad, try the next one".
+      // A cancel is the user asking to stop, and walking the chain anyway
+      // would ignore them. A deadline that long points at the connection
+      // rather than the provider, and trying two more rungs would strand
+      // them for another six minutes to reach the same answer.
+      if (error instanceof ScanCancelledError || error instanceof ScanTimeoutError) {
+        throw error;
+      }
       // A used-up free allowance no longer stops the chain outright — Gemini
       // sitting early in the chain means an exhausted allowance should fall
       // through to OpenAI/OpenRouter rather than ending the scan. The

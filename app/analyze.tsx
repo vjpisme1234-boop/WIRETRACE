@@ -41,9 +41,10 @@ import {
   X,
   Zap,
 } from 'lucide-react-native';
+import ScanFlashcard from '@/components/ScanFlashcard';
 import { WT } from '@/constants/wiretrace';
 import { AppLanguage, isSpanish, loadAppLanguage } from '@/utils/app-language';
-import { analyzeSchematic, analyzeMultipleImages, AnalysisResult, generateCustomOrderReadingSteps, generateReadingSteps, parseVoiceCorrection, ReadingStepsStopReason } from '@/utils/openrouter';
+import { analyzeSchematic, analyzeMultipleImages, AnalysisResult, beginScanSession, cancelActiveScan, endScanSession, generateCustomOrderReadingSteps, generateReadingSteps, parseVoiceCorrection, ReadingStepsStopReason, ScanCancelledError, ScanTimeoutError } from '@/utils/openrouter';
 import { analyzeSchematicMultiPass, MultiPassCoverage } from '@/utils/multi-pass-analysis';
 import {
   generateSchematicName,
@@ -58,6 +59,12 @@ import {
 } from '@/utils/schematic-storage';
 import { findJunctions, matchJunctionAnswer } from '@/utils/schematic-graph';
 import { DEFAULT_UI_PREFERENCES, loadUIPreferences } from '@/utils/ui-preferences';
+
+
+// How long a scan runs before the screen admits it is taking unusually long
+// and offers a way out. Deliberately far below REQUEST_TIMEOUT_MS so the
+// escape hatch is a choice the user makes, not a deadline being enforced.
+const SLOW_SCAN_AFTER_MS = 45_000;
 
 function targetMatches(target: { kind: string; id?: string } | null, kind: string, id: string): boolean {
   return !!target && target.kind === kind && target.id === id;
@@ -324,6 +331,22 @@ export default function AnalyzeScreen() {
   const progressAnim = useRef(new Animated.Value(0)).current;
   const progressAnimRef = useRef<Animated.CompositeAnimation | null>(null);
   const [progressStage, setProgressStage] = useState<string | null>(null);
+  // A scan that is merely slow and one that has died look identical from here,
+  // so after a while the screen stops projecting confidence and hands back
+  // control. Nothing is aborted at this point — a slow scan finishing normally
+  // is the common case, and cutting it off would be the worse failure.
+  const [scanIsSlow, setScanIsSlow] = useState(false);
+
+  // Well past a normal scan and well short of the request deadline, so the
+  // offer to bail lands while the request is still genuinely alive.
+  useEffect(() => {
+    if (!loading) {
+      setScanIsSlow(false);
+      return;
+    }
+    const timer = setTimeout(() => setScanIsSlow(true), SLOW_SCAN_AFTER_MS);
+    return () => clearTimeout(timer);
+  }, [loading]);
   const stepsProgressAnim = useRef(new Animated.Value(0)).current;
   const stepsProgressAnimRef = useRef<Animated.CompositeAnimation | null>(null);
 
@@ -473,8 +496,16 @@ export default function AnalyzeScreen() {
     }, [])
   );
 
+  // Aborts the in-flight request. The catch in the run paths treats this as a
+  // deliberate stop rather than a failure, so no error card appears.
+  const handleCancelScan = useCallback(() => {
+    console.log('[Analyze] User cancelled a slow scan');
+    cancelActiveScan();
+  }, []);
+
   const runAnalysis = useCallback(async (imageUri: string) => {
     setLoading(true);
+    beginScanSession();
     setError(null);
     resetProgress();
     setProgressStage(es ? 'Preparando la imagen...' : 'Preparing image...');
@@ -537,18 +568,34 @@ export default function AnalyzeScreen() {
       animateProgressTo(1, 250);
       console.log('[Analyze] Analysis complete', { id: newSchematic.id, wires: newSchematic.wireCount });
     } catch (e) {
-      const msg = e instanceof Error ? e.message : es ? 'El análisis falló' : 'Analysis failed';
       console.error('[Analyze] Analysis error', e);
-      setError(msg);
-      resetProgress();
+      // Someone choosing to stop is not a failure, so it gets no red error
+      // card — just the screen returning to where they can try again.
+      if (e instanceof ScanCancelledError) {
+        resetProgress();
+      } else if (e instanceof ScanTimeoutError) {
+        setError(
+          es
+            ? 'La AI dejó de responder. Revisa tu señal e inténtalo de nuevo.'
+            : 'The AI stopped responding. Check your signal and try again.'
+        );
+        resetProgress();
+      } else {
+        const msg = e instanceof Error ? e.message : es ? 'El análisis falló' : 'Analysis failed';
+        setError(msg);
+        resetProgress();
+      }
     } finally {
+      endScanSession();
       setLoading(false);
       setProgressStage(null);
+      setScanIsSlow(false);
     }
   }, [es, animateProgressTo, resetProgress]);
 
   const runMultiAnalysis = useCallback(async (imageUris: string[]) => {
     setLoading(true);
+    beginScanSession();
     setError(null);
     resetProgress();
     setProgressStage(
@@ -600,13 +647,26 @@ export default function AnalyzeScreen() {
       animateProgressTo(1, 250);
       console.log('[Analyze] Multi-page analysis complete', { id: newSchematic.id, wires: newSchematic.wireCount });
     } catch (e) {
-      const msg = e instanceof Error ? e.message : es ? 'El análisis falló' : 'Analysis failed';
       console.error('[Analyze] Multi-page analysis error', e);
-      setError(msg);
-      resetProgress();
+      if (e instanceof ScanCancelledError) {
+        resetProgress();
+      } else if (e instanceof ScanTimeoutError) {
+        setError(
+          es
+            ? 'La AI dejó de responder. Revisa tu señal e inténtalo de nuevo.'
+            : 'The AI stopped responding. Check your signal and try again.'
+        );
+        resetProgress();
+      } else {
+        const msg = e instanceof Error ? e.message : es ? 'El análisis falló' : 'Analysis failed';
+        setError(msg);
+        resetProgress();
+      }
     } finally {
+      endScanSession();
       setLoading(false);
       setProgressStage(null);
+      setScanIsSlow(false);
     }
   }, [es, animateProgressTo, resetProgress]);
 
@@ -1447,6 +1507,30 @@ export default function AnalyzeScreen() {
             <AnalysisProgressBar progress={progressAnim} />
             {progressStage ? <Text style={styles.progressStageText}>{progressStage}</Text> : null}
             <Text style={styles.loadingProviderText}>{es ? 'Proveedor AI activo: ' : 'Active AI Provider: '}{activeVisionProviderLabel}</Text>
+
+            {/* The honest signal outranks the entertainment, so it sits above
+                the flashcard and stays visible once shown. */}
+            {scanIsSlow && (
+              <View style={styles.slowScanCard}>
+                <Text style={styles.slowScanText}>
+                  {es
+                    ? 'Esto está tardando más de lo normal. Sigue trabajando o cancela e inténtalo de nuevo.'
+                    : 'This is taking longer than usual. It may still finish, or you can stop and try again.'}
+                </Text>
+                <Pressable
+                  onPress={handleCancelScan}
+                  style={styles.slowScanButton}
+                  accessibilityRole="button"
+                >
+                  <Text style={styles.slowScanButtonText}>
+                    {es ? 'Cancelar escaneo' : 'Cancel scan'}
+                  </Text>
+                </Pressable>
+              </View>
+            )}
+
+            <ScanFlashcard es={es} />
+
             <View style={{ gap: 12, marginTop: 8 }}>
               <SkeletonCard />
               <SkeletonCard />
@@ -2419,6 +2503,26 @@ const styles = StyleSheet.create({
     borderBottomRightRadius: 8,
     backgroundColor: WT.pinkBright,
   },
+  slowScanCard: {
+    marginTop: 14,
+    padding: 12,
+    borderRadius: 12,
+    backgroundColor: WT.bgCardAlt,
+    borderWidth: 1,
+    borderColor: WT.yellowMuted,
+    gap: 10,
+  },
+  slowScanText: { color: WT.textSecondary, fontSize: 13, lineHeight: 18 },
+  slowScanButton: {
+    alignSelf: 'flex-start',
+    paddingVertical: 8,
+    paddingHorizontal: 14,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: WT.borderStrong,
+    backgroundColor: WT.bgInput,
+  },
+  slowScanButtonText: { color: WT.textPrimary, fontSize: 13, fontWeight: '700' },
   progressStageText: {
     fontSize: 12,
     color: WT.pink,

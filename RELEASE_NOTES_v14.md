@@ -1,4 +1,4 @@
-# WireTrace AI — 1.0.0 (versionCode 12) — First release
+# WireTrace AI — 1.0.0 (versionCode 14) — First release
 
 ## Play Store "What's new" (paste this)
 
@@ -26,6 +26,10 @@ advance without touching the screen.
 rarely the order you install in. Swipe a wire to add it to a custom reading
 order and drag the rows to suit the job.
 
+**Built to be read on a job site.** The display leads with Highlight, a high
+contrast mode meant for daylight and bad shop lighting, with Light and Dark
+available if you prefer them.
+
 **Symbols, when the print assumes you already know.** Search the symbol
 dictionary, or photograph a symbol you don't recognize and have it identified.
 A standards reference is included.
@@ -34,6 +38,10 @@ A standards reference is included.
 components, then conductors, then the printed numbers — and reports how many
 numbers it found and how many it placed. Slower and costs more per scan, so
 Standard stays the default.
+
+**It tells you where it stands.** A scan on a weak signal says so and lets you
+stop rather than leaving you watching a bar that has quietly given up. There's
+something to read while you wait.
 
 **English and Spanish**, including the symbol dictionary.
 
